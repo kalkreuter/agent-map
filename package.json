@@ -1,0 +1,13 @@
+{
+  "name": "agent-map",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A read-only hex map of pull requests that need Andre",
+  "engines": { "node": ">=20" },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js",
+    "check": "node --check src/server.js && node --check public/app.js && node --check public/hex-map.js"
+  }
+}
