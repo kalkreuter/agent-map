@@ -1,4 +1,5 @@
 import { classify, dayKey, rules, states } from '../config/rules.js';
+import { pollInterval } from './polling.js';
 
 export function createCache({ repos, github, cursor, now = Date.now }) {
   const previous = new Map();
@@ -14,12 +15,14 @@ export function createCache({ repos, github, cursor, now = Date.now }) {
     if (pending) return pending;
     pending = (async () => {
       const errors = [];
-      let agents = new Map();
+      let agents = { byPr: new Map(), unlinked: [] };
+      github.beginCycle?.();
       const collected = await Promise.all(repos.map(async repo => {
         try {
           const items = await github.collectRepo(repo, now());
           previous.set(repo.repo, items);
-          if (items.some(pr => !pr.dataComplete)) errors.push(`${repo.name}: some PR details are unavailable.`);
+          const warnings = [...new Set(items.flatMap(pr => pr.warnings ?? (pr.warning ? [pr.warning] : [])))];
+          if (warnings.length) errors.push(`${repo.name}: ${warnings.join(' ')}`);
           return { ...repo, stale: false, updatedAt: new Date(now()).toISOString(), items };
         } catch {
           errors.push(`${repo.name}: GitHub unavailable; showing the last successful snapshot, if any.`);
@@ -31,9 +34,15 @@ export function createCache({ repos, github, cursor, now = Date.now }) {
         try { agents = await cursor.collect(); }
         catch { errors.push('Cursor status unavailable. GitHub data is still shown.'); }
       }
+      const standalone = agents.unlinked.flatMap(agent => {
+        const repo = repos.find(repo => repo.repo.toLowerCase() === agent.repo);
+        return repo ? [{ ...agent, repo: repo.repo }] : [];
+      });
+      const prCount = collected.reduce((total, repo) => total + repo.items.length, 0);
       snapshot = { ...snapshot, loading: false, updatedAt: new Date(now()).toISOString(), errors,
+        pollMs: pollInterval({ repoCount: repos.length, prCount, ...github.usage?.(), now: now() }),
         repos: collected.map(({ items, ...repo }) => repo),
-        items: collected.flatMap(repo => repo.items.map(pr => ({ ...pr, agent: agents.get(pr.url) ?? null }))) };
+        items: [...collected.flatMap(repo => repo.items.map(pr => ({ ...pr, agent: agents.byPr.get(pr.url.toLowerCase()) ?? null }))), ...standalone] };
       return view();
     })().finally(() => { pending = null; });
     return pending;

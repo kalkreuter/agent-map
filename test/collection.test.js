@@ -27,6 +27,7 @@ test('GitHub joins checks, commits, reviews and merged-today PRs using REST', as
     else if (url.pathname.endsWith(`/commits/${head}`)) data = { commit: { message: 'Fix storage', committer: { date: '2026-10-15T12:00:00Z' } } };
     else if (url.pathname.endsWith('/check-runs')) data = { check_runs: [{ id: 1, name: 'Codex autofix', status: 'in_progress' }] };
     else if (url.pathname.endsWith('/commits')) data = [{ sha: head, commit: { message: 'Fix storage' } }];
+    else if (url.pathname.endsWith('/status')) data = { statuses: [] };
     else data = [];
     return Response.json(data);
   });
@@ -87,7 +88,7 @@ test('Cursor is optional; when configured, paginate and attach running agents by
     } }] : [], nextCursor: requests.length === 1 ? 'next-page' : undefined });
   });
   const entries = await cursor.collect();
-  assert.equal(entries.get(pr().url).running, true); assert.equal(requests.length, 2);
+  assert.equal(entries.byPr.get(pr().url).running, true); assert.equal(requests.length, 2);
   assert.equal(requests[1].url.searchParams.get('cursor'), 'next-page');
   assert.ok(requests.every(req => req.options.method === 'GET'));
 });
@@ -97,7 +98,7 @@ test('Cursor status without a conversation URL still contributes to working', as
     { status: 'RUNNING', target: { prUrl: 'https://evil.example/x/y/pull/1', url: 'https://cursor.com/agents/no' } },
   ] }));
   const agents = await cursor.collect();
-  assert.equal(agents.size, 1); assert.equal(agents.get(pr().url).url, null);
+  assert.equal(agents.byPr.size, 1); assert.equal(agents.byPr.get(pr().url).url, null);
   const cache = createCache({ repos: [repo], github: { collectRepo: async () => [pr()] }, cursor: { collect: async () => agents }, now: () => now });
   assert.equal((await cache.refresh()).items[0].state, 'WORKING');
 });
@@ -107,4 +108,23 @@ test('optional Cursor errors leave GitHub data available', async () => {
   const result = await cache.refresh();
   assert.equal(result.items[0].state, 'NEEDS_ANDRE'); assert.equal(result.items[0].agent, null);
   assert.match(result.errors[0], /Cursor status unavailable/);
+});
+test('quota headers are observed on failed requests and stop further calls until reset', async () => {
+  let calls = 0, clock = 1000;
+  const reader = createReader({ origin: 'https://api.github.com', service: 'GitHub', now: () => clock, fetchImpl: async () => {
+    calls++;
+    return new Response('private', { status: 403, headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-limit': '5000', 'x-ratelimit-reset': '61' } });
+  } });
+  await assert.rejects(reader.get('/one')); await assert.rejects(reader.get('/two'));
+  assert.equal(calls, 1); assert.equal(reader.usage().remaining, 0); assert.equal(reader.usage().resetAt, 61_000);
+  clock = 62_000; await assert.rejects(reader.get('/three')); assert.equal(calls, 2);
+});
+test('secondary Retry-After is respected and actual cycle request count adjusts polling', async () => {
+  const reader = createReader({ origin: 'https://api.github.com', service: 'GitHub', now: () => 1000,
+    fetchImpl: async () => new Response(null, { status: 429, headers: { 'retry-after': '120' } }) });
+  await assert.rejects(reader.get('/one')); await assert.rejects(reader.get('/two'));
+  assert.equal(reader.usage().requests, 1); assert.equal(reader.usage().retryAt, 121_000);
+  reader.beginCycle(); assert.equal(reader.usage().requests, 0);
+  const cache = createCache({ repos: [repo], github: { collectRepo: async () => [pr()], usage: () => ({ requests: 1000 }) }, now: () => now });
+  assert.ok((await cache.refresh()).pollMs >= 1_440_000);
 });

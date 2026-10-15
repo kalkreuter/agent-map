@@ -28,3 +28,31 @@ test('server gates UI and API, blocks mutations and keeps secrets inaccessible',
 test('startup fails closed without required env vars', async () => {
   await assert.rejects(start({}), /GITHUB_READ_TOKEN and DASHBOARD_PASSWORD/);
 });
+test('HTTP login lockout returns Retry-After, expires, and successful auth resets failures', async t => {
+  let clock = 1000;
+  const server = createServer({ password: 'test-password', cache: { view: () => ({}) }, now: () => clock,
+    authSettings: { maxFailures: 3, windowMs: 60_000, lockoutMs: 1000, maxLockoutMs: 4000, maxEntries: 10 } });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  const wrong = index => fetch(base, { headers: { Authorization: 'Basic dTpiYWQ=', 'X-Forwarded-For': `203.0.113.${index}` } });
+  for (let i = 0; i < 5; i++) assert.equal((await fetch(base)).status, 401); // Initial Basic Auth challenge isn't a failed password.
+  assert.equal((await wrong(1)).status, 401); assert.equal((await wrong(2)).status, 401);
+  assert.equal((await fetch(base, { headers: { Authorization: authorization } })).status, 200);
+  assert.equal((await wrong(3)).status, 401); assert.equal((await wrong(4)).status, 401);
+  const locked = await wrong(5); assert.equal(locked.status, 429); assert.equal(locked.headers.get('retry-after'), '1');
+  assert.equal((await fetch(base, { headers: { Authorization: authorization } })).status, 429);
+  assert.equal((await fetch(base + '/healthz')).status, 200);
+  clock += 1000;
+  assert.equal((await fetch(base, { headers: { Authorization: authorization } })).status, 200);
+  assert.equal((await wrong(6)).status, 401);
+});
+test('trusted proxy isolates clients and rejects invalid proxy configuration', async t => {
+  assert.throws(() => createServer({ password: 'pw', trustProxyHops: -1 }), /TRUST_PROXY_HOPS/);
+  const server = createServer({ password: 'test-password', cache: { view: () => ({}) }, trustProxyHops: 1,
+    authSettings: { maxFailures: 1, windowMs: 60_000, lockoutMs: 1000, maxLockoutMs: 4000, maxEntries: 10 } });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(() => new Promise(resolve => server.close(resolve)));
+  const base = `http://127.0.0.1:${server.address().port}`;
+  assert.equal((await fetch(base, { headers: { Authorization: 'Basic dTpiYWQ=', 'X-Forwarded-For': '198.51.100.2, 203.0.113.1' } })).status, 429);
+  assert.equal((await fetch(base, { headers: { Authorization: authorization, 'X-Forwarded-For': '203.0.113.2' } })).status, 200);
+  assert.equal((await fetch(base, { headers: { Authorization: authorization, 'X-Forwarded-For': '198.51.100.99, 203.0.113.1' } })).status, 429);
+});

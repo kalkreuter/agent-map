@@ -22,3 +22,14 @@ export function summarizeCI(checkRuns, statuses) {
     pending: signals.filter(signal => signal === 'pending').length,
     failed: signals.filter(signal => signal === 'failure').length, runs };
 }
+
+export function workflowChecks(workflowRuns) {
+  const latest = new Map();
+  for (const run of workflowRuns) {
+    const key = run.workflow_id ?? run.path ?? run.name;
+    const previous = latest.get(key);
+    if (!previous || run.id > previous.id || (run.id === previous.id && (run.run_attempt ?? 1) > (previous.run_attempt ?? 1))) latest.set(key, run);
+  }
+  return [...latest].map(([key, run]) => ({ id: run.id, name: run.name ?? String(key),
+    app: { id: key }, status: run.status, conclusion: run.conclusion }));
+}

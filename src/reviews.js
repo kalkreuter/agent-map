@@ -2,9 +2,13 @@ import { hasFinding, rules } from '../config/rules.js';
 
 function reviewerFor(activity, owner) {
   const login = activity.user?.login?.toLowerCase();
+  const app = activity.performed_via_github_app?.slug?.toLowerCase();
+  const body = activity.body ?? '';
+  if (app === 'cursor' || (body.length <= rules.triggerMaxLength && rules.triggerPatterns.some(pattern => pattern.test(body)))) return;
+  if (app === 'claude') return rules.reviewers.find(reviewer => reviewer.id === 'claude');
   return rules.reviewers.find(reviewer => reviewer.logins.includes(login)
     || (reviewer.id === 'claude' && login === owner.toLowerCase()
-      && rules.claudeMarker.test(activity.body ?? '')));
+      && rules.claudeReviewOutput.test(body)));
 }
 
 function reviewedSha(activity) {
