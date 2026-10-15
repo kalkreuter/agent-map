@@ -29,7 +29,12 @@ export function createReader({ origin, headers, service, fetchImpl = fetch, now 
     if (retry && [403, 429].includes(response.status)) retryAt = Math.max(retryAt,
       /^\d+$/.test(retry) ? now() + Number(retry) * 1000 : Date.parse(retry) || 0);
     if (response.status === 304 && cached) return cached.result;
-    if (!response.ok) throw new ApiError(service, response.status);
+    if (!response.ok) {
+      const error = new ApiError(service, response.status);
+      // Primary limits send remaining 0; secondary limits send Retry-After. Both use 403 or 429.
+      if (response.status === 403 && (remaining === '0' || retry)) error.rateLimited = true;
+      throw error;
+    }
     const result = { data: await response.json(), hasNext: /rel="next"/.test(response.headers.get('link') ?? '') };
     const etag = response.headers.get('etag');
     if (etag) {

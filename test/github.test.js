@@ -4,7 +4,7 @@ import { createGitHub } from '../src/github.js';
 import { createCache } from '../src/cache.js';
 import { head, oldHead, repo, now } from './fixtures.js';
 
-function fixture({ checkStatus = 403, actionsStatus = 200, statusStatus = 200, statuses = [], runs,
+function fixture({ checkStatus = 403, checkHeaders, actionsStatus = 200, statusStatus = 200, statuses = [], runs,
   pulls = [{ number: 1, title: 'Storage PR', head: { sha: head }, labels: [], draft: false }], checks = [] } = {}) {
   const requests = [];
   const client = createGitHub('fixture-token', async (url, options) => {
@@ -12,7 +12,10 @@ function fixture({ checkStatus = 403, actionsStatus = 200, statusStatus = 200, s
     const path = url.pathname;
     if (path.endsWith('/pulls')) return Response.json(url.searchParams.get('state') === 'open' ? pulls : []);
     if (/\/commits\/[a-f0-9]{40}$/.test(path)) return Response.json({ commit: { message: 'Storage change', committer: { date: '2026-10-15T16:00:00Z' } } });
-    if (path.endsWith('/check-runs')) return checkStatus === 200 ? Response.json({ check_runs: checks }) : new Response('private', { status: checkStatus });
+    if (path.endsWith('/check-runs')) {
+      const status = typeof checkStatus === 'function' ? checkStatus() : checkStatus;
+      return status === 200 ? Response.json({ check_runs: checks }) : new Response('private', { status, headers: checkHeaders });
+    }
     if (path.endsWith('/status')) return statusStatus === 200 ? Response.json({ statuses }) : new Response('private', { status: statusStatus });
     if (path.endsWith('/actions/runs')) return actionsStatus === 200 ? Response.json({ workflow_runs: runs ?? [
       { id: 1, workflow_id: 10, name: 'Test', status: 'completed', conclusion: 'failure' },
@@ -75,6 +78,29 @@ test('missing commit statuses are reported even if Actions passed', async () => 
   const { client } = fixture({ statusStatus: 403 });
   const [item] = await client.collectRepo(repo, now);
   assert.equal(item.dataComplete, false); assert.equal(item.ci.state, 'unknown'); assert.match(item.warning, /Commit statuses.*read/);
+});
+test('rate-limit Checks 403 is retried instead of disabling Checks or falling back', async () => {
+  for (const checkHeaders of [
+    { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1' },
+    { 'retry-after': '0', 'x-ratelimit-remaining': '20' },
+  ]) {
+    let calls = 0;
+    const { client, requests } = fixture({ checkHeaders, checks: [{ id: 1, name: 'Test', status: 'completed', conclusion: 'success' }],
+      checkStatus: () => ++calls === 1 ? 403 : 200 });
+    const [blocked] = await client.collectRepo(repo, now);
+    assert.equal(blocked.dataComplete, false); assert.equal(blocked.ci.source, 'checks');
+    assert.match(blocked.warning, /CI check runs unavailable: GitHub rate limit reached/);
+    assert.equal(requests.some(request => request.url.pathname.endsWith('/actions/runs')), false);
+    const [recovered] = await client.collectRepo(repo, now);
+    assert.equal(recovered.ci.source, 'checks'); assert.equal(recovered.ci.state, 'success'); assert.equal(recovered.dataComplete, true);
+    assert.equal(calls, 2);
+  }
+});
+test('Checks 403 with remaining quota still falls back and is remembered', async () => {
+  const { client, requests } = fixture({ checkHeaders: { 'x-ratelimit-remaining': '10', 'x-ratelimit-limit': '5000' } });
+  const [item] = await client.collectRepo(repo, now); await client.collectRepo(repo, now);
+  assert.equal(item.ci.source, 'actions'); assert.equal(item.dataComplete, true);
+  assert.equal(requests.filter(request => request.url.pathname.endsWith('/check-runs')).length, 1);
 });
 test('non-permission Checks errors are retried rather than permanently disabling Checks', async () => {
   const { client, requests } = fixture({ checkStatus: 500 });

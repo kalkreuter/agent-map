@@ -4,7 +4,10 @@ function reviewerFor(activity, owner) {
   const login = activity.user?.login?.toLowerCase();
   const app = activity.performed_via_github_app?.slug?.toLowerCase();
   const body = activity.body ?? '';
-  if (app === 'cursor' || (body.length <= rules.triggerMaxLength && rules.triggerPatterns.some(pattern => pattern.test(body)))) return;
+  // cursor[bot] reviews are also performed via the Cursor app. Keep those logins;
+  // the slug only excludes agent fix lists posted as someone else.
+  const bugbotLogin = rules.reviewers.find(reviewer => reviewer.id === 'bugbot')?.logins.includes(login);
+  if ((app === 'cursor' && !bugbotLogin) || (body.length <= rules.triggerMaxLength && rules.triggerPatterns.some(pattern => pattern.test(body)))) return;
   if (app === 'claude') return rules.reviewers.find(reviewer => reviewer.id === 'claude');
   return rules.reviewers.find(reviewer => reviewer.logins.includes(login)
     || (reviewer.id === 'claude' && login === owner.toLowerCase()

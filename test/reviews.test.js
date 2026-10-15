@@ -80,6 +80,15 @@ for (const [name, data, expected] of attributionCases) test(`Claude attribution:
   assert.equal(result[2].openFindings, expected);
   if (!expected) assert.equal(result[2].lastAt, null);
 });
+test('Bugbot reviews performed via the Cursor GitHub app still count', () => {
+  for (const login of ['cursor[bot]', 'cursor-bugbot[bot]']) {
+    const result = summarize({ comments: [comment({ user: { login }, performed_via_github_app: { slug: 'cursor' } })],
+      issueComments: [comment({ user: { login }, performed_via_github_app: { slug: 'cursor' }, commit_id: undefined,
+        body: `Reviewed ${head}: no P1/P2 findings` })] });
+    assert.equal(result[0].openFindings, 1); assert.equal(result[0].currentHead, true);
+    assert.equal(result[2].openFindings, 0); assert.equal(result[2].lastAt, null);
+  }
+});
 test('review attribution honors app metadata on reviews and inline comments too', () => {
   const result = summarize({ reviews: [{ ...comment(), user: { login: 'integration' }, performed_via_github_app: { slug: 'claude' }, state: 'COMMENTED', submitted_at: date }],
     comments: [comment({ user: { login: 'kalkreuter' }, performed_via_github_app: { slug: 'cursor' }, body: '## Code review\nP2' })] });

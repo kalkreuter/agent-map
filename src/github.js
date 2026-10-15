@@ -4,8 +4,8 @@ import { summarizeReviews } from './reviews.js';
 import { dayKey, rules } from '../config/rules.js';
 
 function missing(label, permission, error) {
+  if (error?.status === 429 || error?.rateLimited) return `${label} unavailable: GitHub rate limit reached.`;
   if (error?.status === 403) return `${label} unavailable: token needs ${permission} read or repository access was denied.`;
-  if (error?.status === 429) return `${label} unavailable: GitHub rate limit reached.`;
   return `${label} unavailable: GitHub request failed${error?.status ? ` (${error.status})` : ''}.`;
 }
 
@@ -13,13 +13,14 @@ export function createGitHub(token, fetchImpl) {
   const api = createReader({ origin: 'https://api.github.com', service: 'GitHub', fetchImpl,
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'agent-map' } });
-  // One permission probe per repo, shared by concurrent PRs. A 403 disables
-  // Checks for that repo until process restart (e.g. after changing the token).
+  // One permission probe per repo, shared by concurrent PRs. A permission 403
+  // disables Checks for that repo until process restart (e.g. after changing the token).
+  // Rate-limit 403s are not remembered, so Checks is tried again on a later poll.
   const checkAccess = new Map();
   async function readChecks(repo, sha) {
     const read = async () => {
       try { return await api.list(`/repos/${repo}/commits/${sha}/check-runs?filter=latest`, 'check_runs'); }
-      catch (error) { if (error.status !== 403) throw error; checkAccess.set(repo, false); return null; }
+      catch (error) { if (error.status !== 403 || error.rateLimited) throw error; checkAccess.set(repo, false); return null; }
     };
     const access = checkAccess.get(repo);
     if (access === false) return null;
