@@ -5,6 +5,7 @@ import { createCache } from '../src/cache.js';
 import { head, oldHead, repo, now } from './fixtures.js';
 
 function fixture({ checkStatus = 403, checkHeaders, actionsStatus = 200, statusStatus = 200, statuses = [], runs, clock,
+  reviewStatus = 200, comments = [],
   pulls = [{ number: 1, title: 'Storage PR', head: { sha: head }, labels: [], draft: false }], checks = [] } = {}) {
   const requests = [];
   const client = createGitHub('fixture-token', async (url, options) => {
@@ -14,14 +15,17 @@ function fixture({ checkStatus = 403, checkHeaders, actionsStatus = 200, statusS
     if (/\/commits\/[a-f0-9]{40}$/.test(path)) return Response.json({ commit: { message: 'Storage change', committer: { date: '2026-10-15T16:00:00Z' } } });
     if (path.endsWith('/check-runs')) {
       const status = typeof checkStatus === 'function' ? checkStatus() : checkStatus;
-      return status === 200 ? Response.json({ check_runs: checks }) : new Response('private', { status, headers: checkHeaders });
+      return status === 200 ? Response.json({ check_runs: typeof checks === 'function' ? checks(url) : checks })
+        : new Response('private', { status, headers: checkHeaders });
     }
     if (path.endsWith('/status')) return statusStatus === 200 ? Response.json({ statuses }) : new Response('private', { status: statusStatus });
     if (path.endsWith('/actions/runs')) return actionsStatus === 200 ? Response.json({ workflow_runs: runs ?? [
       { id: 1, workflow_id: 10, name: 'Test', status: 'completed', conclusion: 'failure' },
       { id: 2, workflow_id: 10, name: 'Test', status: 'completed', conclusion: 'success' },
     ] }) : new Response('private', { status: actionsStatus });
-    if (path.endsWith('/commits') || path.endsWith('/reviews') || path.endsWith('/comments')) return Response.json([]);
+    if (path.endsWith('/reviews')) return reviewStatus === 200 ? Response.json([]) : new Response('private', { status: reviewStatus });
+    if (path.endsWith('/comments')) return Response.json(path.includes('/issues/') ? [] : comments);
+    if (path.endsWith('/commits')) return Response.json([]);
     throw new Error(`Unexpected request ${path}`);
   }, { now: clock });
   return { client, requests };
@@ -53,6 +57,18 @@ test('accessible Checks are used without fetching Actions', async () => {
   assert.equal(item.ci.state, 'success'); assert.equal(item.ci.source, 'checks'); assert.equal(item.dataComplete, true);
   assert.equal(requests.some(request => request.url.pathname.endsWith('/actions/runs')), false);
 });
+test('a shared successful Checks probe collects review evidence for each distinct PR head', async () => {
+  const { client, requests } = fixture({ checkStatus: 200, pulls: [
+    { number: 1, title: 'One', head: { sha: head } }, { number: 2, title: 'Two', head: { sha: oldHead } },
+  ], checks: url => [{ id: 1, name: 'Cursor Bugbot', app: { slug: 'cursor' }, head_sha: url.pathname.split('/').at(-2),
+    status: 'completed', conclusion: 'success', completed_at: '2026-10-15T17:00:00Z',
+    output: { summary: '**Final Result:** Bugbot completed review - no issues found!' } }] });
+  const items = await client.collectRepo(repo, now);
+  assert.deepEqual(items.map(item => item.reviewers[0].lastReviewedSha), [head, oldHead]);
+  assert.ok(items.every(item => item.reviewers[0].currentHead && item.dataComplete));
+  const checkRequests = requests.filter(request => request.url.pathname.endsWith('/check-runs'));
+  assert.equal(checkRequests.length, 2);
+});
 test('Bugbot check evidence reaches reviewer summaries without leaking raw check output', async () => {
   const checks = [{ id: 1, name: 'Cursor Bugbot', app: { slug: 'cursor' }, head_sha: head,
     status: 'completed', conclusion: 'success', completed_at: '2026-10-15T17:00:00Z',
@@ -70,6 +86,32 @@ test('an issue count without corresponding review comments cannot automatically 
   const snapshot = await createCache({ repos: [repo], github: client, now: () => now }).refresh();
   assert.equal(snapshot.items[0].dataComplete, false); assert.equal(snapshot.items[0].state, 'DRAFT_IDLE');
   assert.match(snapshot.errors[0], /Bugbot reported issues/);
+});
+test('a clean Bugbot check cannot make missing formal review data complete or ready', async () => {
+  const { client } = fixture({ checkStatus: 200, reviewStatus: 403, checks: [{ id: 1, name: 'Cursor Bugbot',
+    app: { slug: 'cursor' }, head_sha: head, status: 'completed', conclusion: 'success',
+    completed_at: '2026-10-15T17:00:00Z',
+    output: { summary: '**Final Result:** Bugbot completed review - no issues found!' } }] });
+  const snapshot = await createCache({ repos: [repo], github: client, now: () => now }).refresh();
+  const [item] = snapshot.items;
+  assert.equal(item.ci.state, 'success'); assert.equal(item.reviewers[0].currentHead, true);
+  assert.ok(item.reviewers.every(reviewer => reviewer.complete === false));
+  assert.equal(item.dataComplete, false); assert.equal(item.state, 'DRAFT_IDLE');
+  assert.match(snapshot.errors[0], /Reviews unavailable: token needs Pull requests read/);
+});
+test('Actions fallback output is never used as clean Bugbot review evidence', async () => {
+  const { client } = fixture({ runs: [{ id: 2, workflow_id: 10, name: 'Cursor Bugbot', app: { slug: 'cursor' },
+    head_sha: head, status: 'completed', conclusion: 'success', completed_at: '2026-10-15T17:00:00Z',
+    output: { summary: '**Final Result:** Bugbot completed review - no issues found!' } }],
+    comments: [{ id: 1, user: { login: 'cursor[bot]' }, body: 'P2: Previous finding',
+      original_commit_id: oldHead, commit_id: head, original_line: 10, line: null,
+      created_at: '2026-10-15T16:00:00Z' }] });
+  const snapshot = await createCache({ repos: [repo], github: client, now: () => now }).refresh();
+  const [item] = snapshot.items;
+  assert.equal(item.ci.state, 'success'); assert.equal(item.ci.source, 'actions');
+  assert.equal(item.dataComplete, true); assert.equal(item.warning, '');
+  assert.equal(item.reviewers[0].currentHead, false); assert.equal(item.reviewers[0].openFindings, 1);
+  assert.equal(item.state, 'FIXES_NEEDED');
 });
 test('Actions workflow failures, pending runs, and external failing statuses affect CI', async () => {
   for (const [runs, statuses, expected] of [

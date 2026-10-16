@@ -30,11 +30,16 @@ function checkReview(reviewer, checkRuns, headSha) {
   if (!latest || latest.status !== 'completed' || !config.conclusions.includes(latest.conclusion)
     || !Number.isFinite(Date.parse(latest.completed_at))) return;
   const output = [latest.output?.summary, latest.output?.text].filter(Boolean).join('\n');
-  const clean = config.clean.test(output);
-  const count = output.match(config.issueCount)?.[1];
-  if (!clean && count === undefined) return;
+  const counts = output.split('\n').flatMap(line => {
+    const count = line.match(config.issueCount)?.[1];
+    return count === undefined ? [] : [Number(count)];
+  });
+  const reportedIssues = Math.max(0, ...counts);
+  // Conflicting result lines must not let a clean result hide reported issues.
+  const clean = config.clean.test(output) && reportedIssues === 0;
+  if (!clean && !counts.length) return;
   return { kind: 'check', body: '', at: latest.completed_at, commit_id: headSha,
-    clearOutdated: clean && config.supersedesOutdatedFindings, reportedIssues: clean ? 0 : Number(count) };
+    clearOutdated: clean && config.supersedesOutdatedFindings, reportedIssues };
 }
 
 function supersededByCheck(item, check) {

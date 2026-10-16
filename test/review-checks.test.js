@@ -69,6 +69,25 @@ test('a quoted previous result cannot override the current check result', () => 
     'Previous run: Bugbot completed review - no issues found.\n**Final Result:** Bugbot completed review and found 1 potential issue.' } })] })[0];
   assert.equal(result.openFindings, null); assert.equal(result.complete, false);
 });
+test('a clean result cannot override an explicit issue count elsewhere in check output', () => {
+  const foundText = '**Final Result:** Bugbot completed review and found 2 potential issues.';
+  for (const output of [
+    { summary: `${cleanText}\n${foundText}` }, { summary: `${foundText}\n${cleanText}` },
+    { summary: cleanText, text: foundText }, { summary: foundText, text: cleanText },
+  ]) {
+    const reviewer = summarize({ comments: [finding()], checkRuns: [check({ output })] })[0];
+    assert.equal(reviewer.currentHead, true); assert.equal(reviewer.openFindings, 1);
+    assert.equal(reviewer.complete, false);
+  }
+});
+test('conflicting reported issue counts retain the largest count until details are available', () => {
+  const output = { summary: '**Final Result:** Bugbot completed review and found 1 potential issue.',
+    text: '**Final Result:** Bugbot completed review and found 2 potential issues.' };
+  const comments = [finding({ original_commit_id: head, body: '[P3] Low severity: improve wording' })];
+  const reviewer = summarize({ comments, checkRuns: [check({ output })] })[0];
+  assert.equal(reviewer.currentHead, true); assert.equal(reviewer.openFindings, null);
+  assert.equal(reviewer.complete, false);
+});
 test('known blocking and low-severity comments cover the reported issue count without double counting', () => {
   const checkRuns = [check({ conclusion: 'neutral', output: { summary: '**Final Result:** Bugbot completed review and found 2 potential issues.' } })];
   const comments = [finding({ original_commit_id: head }), finding({ id: 2, original_commit_id: head, body: '[P3] Low severity: improve wording' })];
