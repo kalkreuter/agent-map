@@ -4,7 +4,7 @@ import { createGitHub } from '../src/github.js';
 import { createCache } from '../src/cache.js';
 import { head, oldHead, repo, now } from './fixtures.js';
 
-function fixture({ checkStatus = 403, checkHeaders, actionsStatus = 200, statusStatus = 200, statuses = [], runs,
+function fixture({ checkStatus = 403, checkHeaders, actionsStatus = 200, statusStatus = 200, statuses = [], runs, clock,
   pulls = [{ number: 1, title: 'Storage PR', head: { sha: head }, labels: [], draft: false }], checks = [] } = {}) {
   const requests = [];
   const client = createGitHub('fixture-token', async (url, options) => {
@@ -23,7 +23,7 @@ function fixture({ checkStatus = 403, checkHeaders, actionsStatus = 200, statusS
     ] }) : new Response('private', { status: actionsStatus });
     if (path.endsWith('/commits') || path.endsWith('/reviews') || path.endsWith('/comments')) return Response.json([]);
     throw new Error(`Unexpected request ${path}`);
-  });
+  }, { now: clock });
   return { client, requests };
 }
 test('Checks 403 falls back to latest Actions runs plus statuses with no missing-detail warning', async () => {
@@ -102,6 +102,33 @@ test('Checks 403 with remaining quota still falls back and is remembered', async
   assert.equal(item.ci.source, 'actions'); assert.equal(item.dataComplete, true);
   assert.equal(requests.filter(request => request.url.pathname.endsWith('/check-runs')).length, 1);
 });
+for (const warmup of [false, true]) {
+  for (const [name, checkHeaders] of [
+    ['primary reset', { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '61' }],
+    ['secondary Retry-After', { 'retry-after': '60', 'x-ratelimit-remaining': '20' }],
+  ]) test(`Checks resumes after ${name} with ${warmup ? 'known' : 'unknown'} permission`, async () => {
+    let clock = 1000, checkStatus = warmup ? 200 : 403, calls = 0;
+    const { client, requests } = fixture({ clock: () => clock, checkHeaders,
+      checkStatus: () => { calls++; return checkStatus; },
+      checks: [{ id: 1, name: 'Test', status: 'completed', conclusion: 'success' }] });
+    if (warmup) {
+      assert.equal((await client.collectRepo(repo, now))[0].ci.state, 'success');
+      checkStatus = 403;
+    }
+    const [limited] = await client.collectRepo(repo, now);
+    assert.match(limited.warning, /CI check runs unavailable: GitHub rate limit reached/);
+    assert.equal(limited.dataComplete, false);
+    const callsBeforeWait = calls;
+    await assert.rejects(client.collectRepo(repo, now), error => error.status === 429);
+    assert.equal(calls, callsBeforeWait);
+    assert.equal(client.usage().retryAt || client.usage().resetAt, 61_000);
+    clock = 61_000; checkStatus = 200;
+    const [recovered] = await client.collectRepo(repo, now);
+    assert.equal(recovered.ci.source, 'checks'); assert.equal(recovered.ci.state, 'success');
+    assert.equal(recovered.dataComplete, true); assert.equal(calls, callsBeforeWait + 1);
+    assert.equal(requests.some(request => request.url.pathname.endsWith('/actions/runs')), false);
+  });
+}
 test('non-permission Checks errors are retried rather than permanently disabling Checks', async () => {
   const { client, requests } = fixture({ checkStatus: 500 });
   const [item] = await client.collectRepo(repo, now); await client.collectRepo(repo, now);

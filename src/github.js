@@ -9,8 +9,8 @@ function missing(label, permission, error) {
   return `${label} unavailable: GitHub request failed${error?.status ? ` (${error.status})` : ''}.`;
 }
 
-export function createGitHub(token, fetchImpl) {
-  const api = createReader({ origin: 'https://api.github.com', service: 'GitHub', fetchImpl,
+export function createGitHub(token, fetchImpl, { now = Date.now } = {}) {
+  const api = createReader({ origin: 'https://api.github.com', service: 'GitHub', fetchImpl, now,
     headers: { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'agent-map' } });
   // One permission probe per repo, shared by concurrent PRs. A permission 403

@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { summarizeReviews } from '../src/reviews.js';
-import { head, oldHead } from './fixtures.js';
+import { classify } from '../config/rules.js';
+import { head, oldHead, now, pr } from './fixtures.js';
 const bot = 'chatgpt-codex-connector[bot]';
 const date = '2026-10-15T12:00:00Z';
 function summarize(overrides) {
@@ -88,6 +89,18 @@ test('Bugbot reviews performed via the Cursor GitHub app still count', () => {
     assert.equal(result[0].openFindings, 1); assert.equal(result[0].currentHead, true);
     assert.equal(result[2].openFindings, 0); assert.equal(result[2].lastAt, null);
   }
+});
+test('Cursor-app Bugbot sign-off readies a quiet draft and its findings still block', () => {
+  const reviews = ['cursor[bot]', bot, 'claude[bot]'].map((login, index) => ({ id: index + 1,
+    user: { login }, performed_via_github_app: index === 0 ? { slug: 'cursor' } : undefined,
+    body: 'No P1/P2 findings', state: 'COMMENTED', commit_id: head, submitted_at: date }));
+  const clear = summarize({ reviews });
+  assert.equal(clear[0].currentHead, true); assert.equal(clear[0].openFindings, 0);
+  assert.equal(classify(pr({ draft: true, reviewers: clear }), now), 'NEEDS_ANDRE');
+  const blocked = summarize({ reviews, comments: [comment({ user: { login: 'cursor[bot]' },
+    performed_via_github_app: { slug: 'cursor' }, pull_request_review_id: 1 })] });
+  assert.equal(blocked[0].openFindings, 1);
+  assert.equal(classify(pr({ draft: true, reviewers: blocked }), now), 'FIXES_NEEDED');
 });
 test('review attribution honors app metadata on reviews and inline comments too', () => {
   const result = summarize({ reviews: [{ ...comment(), user: { login: 'integration' }, performed_via_github_app: { slug: 'claude' }, state: 'COMMENTED', submitted_at: date }],
