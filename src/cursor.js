@@ -19,17 +19,27 @@ export function createCursor(key, fetchImpl) {
         seen.add(cursor);
       } while (cursor);
       const byPr = new Map();
+      const unlinked = new Map();
       for (const agent of agents) {
         let prUrl, agentUrl = null;
-        try { prUrl = new URL(agent.target?.prUrl); } catch { continue; }
-        if (prUrl.origin !== 'https://github.com' || !/^\/[^/]+\/[^/]+\/pull\/\d+\/?$/.test(prUrl.pathname)) continue;
+        try { prUrl = new URL(agent.target?.prUrl); } catch { /* No linked PR. */ }
+        if (prUrl && (prUrl.origin !== 'https://github.com' || !/^\/[^/]+\/[^/]+\/pull\/\d+\/?$/.test(prUrl.pathname))) continue;
         try { const url = new URL(agent.target?.url); if (url.origin === 'https://cursor.com') agentUrl = url.href; } catch { /* Agent may have no conversation URL yet. */ }
-        const normalized = prUrl.origin + prUrl.pathname.replace(/\/$/, '');
-        const entry = { url: agentUrl, status: agent.status ?? 'UNKNOWN',
+        const entry = { id: agent.id, url: agentUrl, status: agent.status ?? 'UNKNOWN',
           running: rules.runningAgentStatuses.includes(agent.status) };
-        if (!byPr.has(normalized) || entry.running) byPr.set(normalized, entry);
+        if (prUrl) {
+          const normalized = (prUrl.origin + prUrl.pathname.replace(/\/$/, '')).toLowerCase();
+          if (!byPr.has(normalized) || entry.running) byPr.set(normalized, entry);
+          continue;
+        }
+        let repository;
+        try { repository = new URL(agent.source?.repository); } catch { continue; }
+        if (repository.origin !== 'https://github.com' || !/^\/[^/]+\/[^/]+\/?$/.test(repository.pathname) || !agent.id) continue;
+        const repo = repository.pathname.slice(1).replace(/\/$/, '').replace(/\.git$/, '').toLowerCase();
+        unlinked.set(agent.id, { kind: 'agent', id: `cursor:${agent.id}`, repo, title: agent.name || 'Cursor cloud agent',
+          createdAt: agent.createdAt, agent: entry });
       }
-      return byPr;
+      return { byPr, unlinked: [...unlinked.values()] };
     },
   };
 }

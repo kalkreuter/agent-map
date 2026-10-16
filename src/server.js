@@ -5,6 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { createGitHub } from './github.js';
 import { createCursor } from './cursor.js';
 import { createCache } from './cache.js';
+import { clientIP, createLoginLimiter } from './auth.js';
+import { startPolling } from './polling.js';
 import { rules } from '../config/rules.js';
 
 const assets = new Map([
@@ -22,8 +24,10 @@ export function authorized(header, password) {
   return separator >= 0 && timingSafeEqual(hash(credentials.slice(separator + 1)), hash(password));
 }
 
-export function createServer({ password, cache }) {
+export function createServer({ password, cache, trustProxyHops = 0, authSettings = rules.auth, now = Date.now }) {
   if (!password) throw new Error('DASHBOARD_PASSWORD is required');
+  if (!Number.isInteger(trustProxyHops) || trustProxyHops < 0 || trustProxyHops > 10) throw new Error('TRUST_PROXY_HOPS must be an integer from 0 to 10');
+  const limiter = createLoginLimiter({ config: authSettings, now });
   return http.createServer(async (req, res) => {
     const headers = { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer', 'X-Frame-Options': 'DENY',
@@ -35,9 +39,15 @@ export function createServer({ password, cache }) {
     catch { return send(400, 'Invalid request URL'); }
     // Health reveals no private data and supports Railway's health checks.
     if (path === '/healthz' && ['GET', 'HEAD'].includes(req.method)) return send(200, 'ok');
+    const ip = clientIP(req, trustProxyHops);
+    const locked = limiter.retryAfter(ip);
+    if (locked) return send(429, 'Too many failed logins. Try again later.', { 'Retry-After': String(locked) });
     if (!authorized(req.headers.authorization, password)) {
+      const retryAfter = req.headers.authorization ? limiter.fail(ip) : 0;
+      if (retryAfter) return send(429, 'Too many failed logins. Try again later.', { 'Retry-After': String(retryAfter) });
       return send(401, 'Password required', { 'WWW-Authenticate': 'Basic realm="Agent Map", charset="UTF-8"' });
     }
+    limiter.reset(ip);
     if (!['GET', 'HEAD'].includes(req.method)) return send(405, 'Read-only', { Allow: 'GET, HEAD' });
     try {
       if (path === '/api/map') return send(200, JSON.stringify(cache.view()), { 'Content-Type': 'application/json; charset=utf-8' });
@@ -57,14 +67,12 @@ export async function start(env = process.env) {
     throw new Error('config/repos.json must contain repo, name, and a six-digit hex color for each project.');
   }
   const cache = createCache({ repos, github: createGitHub(env.GITHUB_READ_TOKEN), cursor: createCursor(env.CURSOR_API_KEY) });
-  const server = createServer({ password: env.DASHBOARD_PASSWORD, cache });
+  const server = createServer({ password: env.DASHBOARD_PASSWORD, cache, trustProxyHops: Number(env.TRUST_PROXY_HOPS ?? 0) });
   const port = Number(env.PORT ?? 3000);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535');
   server.listen(port, '0.0.0.0', () => console.log(`Agent Map listening on port ${server.address().port}`));
-  void cache.refresh().catch(() => console.error('Initial refresh failed; retrying on next poll.'));
-  const timer = setInterval(() => { void cache.refresh().catch(() => console.error('Refresh failed; retrying on next poll.')); }, rules.pollMs);
-  timer.unref();
-  server.on('close', () => clearInterval(timer));
+  const stopPolling = startPolling(cache, { onError: () => console.error('Refresh failed; retrying on next poll.') });
+  server.on('close', stopPolling);
   for (const signal of ['SIGTERM', 'SIGINT']) process.once(signal, () => server.close());
   return server;
 }

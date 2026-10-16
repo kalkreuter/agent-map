@@ -5,18 +5,57 @@ export class ApiError extends Error {
   }
 }
 
+async function githubForbidden(response) {
+  let data;
+  try { data = await response.json(); } catch { return {}; }
+  const message = typeof data?.message === 'string' ? data.message : '';
+  // Inspect only to classify the response; never retain its private body on errors.
+  return {
+    secondary: /\bsecondary rate limits?\b|\babuse detection mechanism\b/i.test(message)
+      || /^https:\/\/docs\.github\.com\/.*#(?:about-)?secondary-rate-limits$/.test(data?.documentation_url ?? ''),
+    permissionDenied: /^Resource not accessible by (?:personal access token|integration)\.?$/i.test(message),
+  };
+}
+
 // Fixed origins + GET-only transport: no caller can issue a service mutation or
 // redirect an authorization header to another origin. Never expose API bodies.
-export function createReader({ origin, headers, service, fetchImpl = fetch }) {
+export function createReader({ origin, headers, service, fetchImpl = fetch, now = Date.now }) {
   const conditional = new Map();
+  let requests = 0, rateLimit = {}, retryAt = 0;
   async function get(path) {
     const url = new URL(path, origin);
     if (url.origin !== origin || !path.startsWith('/')) throw new Error('Invalid API path');
     const cached = conditional.get(path);
+    if (rateLimit.remaining === 0 && rateLimit.resetAt > now()) throw new ApiError(service, 429);
+    if (retryAt > now()) throw new ApiError(service, 429);
+    requests++;
     const response = await fetchImpl(url, { method: 'GET', headers: { ...headers,
       ...(cached ? { 'If-None-Match': cached.etag } : {}) }, redirect: 'error', signal: AbortSignal.timeout(15_000) });
+    const remaining = response.headers.get('x-ratelimit-remaining');
+    const reset = Number(response.headers.get('x-ratelimit-reset')) * 1000;
+    if (remaining !== null && (!rateLimit.resetAt || reset >= rateLimit.resetAt)) {
+      rateLimit = { remaining: reset === rateLimit.resetAt ? Math.min(rateLimit.remaining, Number(remaining)) : Number(remaining),
+        limit: Number(response.headers.get('x-ratelimit-limit')) || 5000, resetAt: reset };
+    }
+    const retry = response.headers.get('retry-after');
+    if (retry && [403, 429].includes(response.status)) retryAt = Math.max(retryAt,
+      /^\d+$/.test(retry) ? now() + Number(retry) * 1000 : Date.parse(retry) || 0);
     if (response.status === 304 && cached) return cached.result;
-    if (!response.ok) throw new ApiError(service, response.status);
+    if (!response.ok) {
+      const error = new ApiError(service, response.status);
+      if (response.status === 403 && (remaining === '0' || retry)) error.rateLimited = true;
+      if (response.status === 403 && origin === 'https://api.github.com') {
+        const reason = await githubForbidden(response);
+        if (reason.secondary) error.rateLimited = true;
+        if (!error.rateLimited && reason.permissionDenied) error.permissionDenied = true;
+        // Secondary limits can omit Retry-After and leave primary quota intact.
+        // An unrecognized 403 may also be a throttle, so retry it conservatively.
+        if (reason.secondary || retry || (!error.rateLimited && !error.permissionDenied)) {
+          retryAt = Math.max(retryAt, now() + 60_000);
+        }
+      }
+      throw error;
+    }
     const result = { data: await response.json(), hasNext: /rel="next"/.test(response.headers.get('link') ?? '') };
     const etag = response.headers.get('etag');
     if (etag) {
@@ -36,7 +75,7 @@ export function createReader({ origin, headers, service, fetchImpl = fetch }) {
       if (!hasNext || stop?.(batch)) return items;
     }
   }
-  return { get, list };
+  return { get, list, beginCycle: () => { requests = 0; }, usage: () => ({ requests, ...rateLimit, retryAt }) };
 }
 
 export async function mapLimit(items, limit, mapper) {

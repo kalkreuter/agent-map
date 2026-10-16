@@ -105,18 +105,21 @@ export class HexMap {
       const top = Math.min(...ys) - R, bottom = Math.max(...ys) + R;
       const origin = offsetX - left;
       const group = svgElement('g');
+      const prCount = repo.items.filter(item => item.kind !== 'agent').length;
+      const agentCount = repo.items.length - prCount;
       group.append(svgElement('text', { x: offsetX, y: top - 44, fill: repo.color, class: 'cluster-label' }, repo.name.toUpperCase()),
-        svgElement('text', { x: offsetX, y: top - 24, class: 'cluster-count' }, `${repo.items.length} PULL REQUEST${repo.items.length === 1 ? '' : 'S'}${repo.stale ? ' · STALE' : ''}`));
+        svgElement('text', { x: offsetX, y: top - 24, class: 'cluster-count' }, `${prCount} PR${prCount === 1 ? '' : 'S'}${agentCount ? ` · ${agentCount} AGENT${agentCount === 1 ? '' : 'S'}` : ''}${repo.stale ? ' · STALE' : ''}`));
       repo.items.forEach((item, index) => {
         const point = positions[index], x = origin + point.x, y = point.y, state = states[item.state];
+        const label = item.kind === 'agent' ? 'AGENT' : `#${item.number}`;
         const tile = svgElement('g', { class: `tile ${item.state}`, tabindex: '0', role: 'button', 'data-id': item.id,
-          'aria-label': `${repo.name}, #${item.number}: ${item.title}. ${state.label}`, 'aria-pressed': 'false' });
+          'aria-label': `${repo.name}, ${label}: ${item.title}. ${state.label}`, 'aria-pressed': 'false' });
         if (state.fadeMs && item.mergedAt) tile.setAttribute('opacity', Math.max(.3, 1 - Math.max(0, Date.now() - Date.parse(item.mergedAt)) / state.fadeMs));
-        tile.append(svgElement('title', {}, `#${item.number} ${item.title} — ${state.label}`),
+        tile.append(svgElement('title', {}, `${label} ${item.title} — ${state.label}`),
           svgElement('polygon', { points: hexPoints(x, y), class: 'hex', fill: state.color, 'fill-opacity': '.07', stroke: state.color, 'stroke-opacity': '.6' }),
           svgElement('line', { x1: x - 15, x2: x + 15, y1: y + 49, y2: y + 49, stroke: repo.color, class: 'repo-edge' }),
           svgElement('text', { x, y: y - 25, 'text-anchor': 'middle', fill: state.color, class: 'tile-symbol' }, state.symbol),
-          svgElement('text', { x, y: y - 3, 'text-anchor': 'middle', class: 'tile-number' }, `#${item.number}`));
+          svgElement('text', { x, y: y - 3, 'text-anchor': 'middle', class: 'tile-number' }, label));
         const words = item.title.replace(/\s+/g, ' ').trim();
         tile.append(svgElement('text', { x, y: y + 16, 'text-anchor': 'middle', class: 'tile-title' }, words.length > 17 ? `${words.slice(0, 16)}…` : words),
           svgElement('text', { x, y: y + 30, 'text-anchor': 'middle', class: 'tile-title' }, item.draft ? 'DRAFT' : state.label.toUpperCase()));
