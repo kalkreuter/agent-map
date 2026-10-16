@@ -93,9 +93,10 @@ test('Railway remains independent when GitHub or branch comparison fails, and co
   const unknown = await cache.refresh();
   assert.equal(calls, 2); assert.ok(unknown.items.every(item => item.sync.status === 'unknown' && !item.stale));
   assert.doesNotMatch(JSON.stringify(unknown), /private/);
-  const failed = await createCache({ repos: [configured], github: { collectRepo: async () => [pr()] },
+  const failed = await createCache({ repos: [{ ...configured, railway: [{ ...target, branch: 'release' }] }], github: { collectRepo: async () => [pr()] },
     railway: { collectRepo: async () => { throw new Error('private'); } } }).refresh();
   assert.equal(failed.items[1].state, 'DEPLOY_UNKNOWN'); assert.equal(failed.items[0].state, 'NEEDS_ANDRE');
+  assert.deepEqual(failed.items[1].sync, { status: 'unknown', branch: 'release', headSha: null });
 });
 
 test('Railway configuration accepts multiple optional targets and rejects malformed or duplicate scopes', () => {

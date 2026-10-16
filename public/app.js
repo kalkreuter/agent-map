@@ -30,7 +30,7 @@ function deploymentFact(label, value, detail = '', className = '') {
 }
 function renderDeployment(item) {
   const deployment = item.deployment ?? {}, sync = item.sync ?? {};
-  const branch = sync.branch || 'main', live = deployment.live, latest = deployment.latest;
+  const branch = sync.branch || item.branch || 'main', live = deployment.live, latest = deployment.latest;
   const knownShas = Boolean(live?.sha && sync.headSha);
   const comparison = item.stale ? 'stale' : !knownShas || (sync.status === 'current' && live.sha !== sync.headSha)
     ? 'unknown' : sync.status;

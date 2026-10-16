@@ -35,7 +35,8 @@ export function createCache({ repos, github, cursor, railway, now = Date.now }) 
             const old = previousDeployments.get(item.id);
             const warning = `${item.warning || 'Railway deployment unavailable.'}${old ? ' Showing the last successful Railway snapshot.' : ''}`;
             errors.push(`${repo.name}: ${warning}`);
-            return { ...(old ?? item), warning, stale: true, dataComplete: false };
+            return { ...(old ?? item), sync: old?.sync ?? { status: 'unknown', branch: item.branch ?? 'main', headSha: null },
+              warning, stale: true, dataComplete: false };
           }
           const branch = item.branch ?? 'main';
           let sync = { status: 'unknown', branch, headSha: null };
