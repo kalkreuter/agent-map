@@ -111,6 +111,21 @@ test('Railway remains independent when GitHub or branch comparison fails, and co
   assert.deepEqual(failed.items[1].sync, { status: 'unknown', branch: 'release', headSha: null });
 });
 
+test('a failed branch comparison preserves the collector warning and the live deployment', async () => {
+  const collectorWarning = 'Railway could not verify all active deployments.';
+  const github = { collectRepo: async () => [pr()], compareDeployment: async () => { throw new Error('private upstream error'); } };
+  const railway = { collectRepo: async () => [deployment({ warning: collectorWarning })] };
+  const snapshot = await createCache({ repos: [configured], github, railway, now: () => now }).refresh();
+  const item = snapshot.items[1];
+  const expected = `${collectorWarning} Live deployment is available, but its branch comparison is unavailable.`;
+  assert.equal(item.warning, expected);
+  assert.deepEqual(snapshot.errors, [`${repo.name}: ${expected}`]);
+  assert.equal(item.state, 'DEPLOY_UNVERIFIED'); assert.equal(item.dataComplete, false);
+  assert.equal(item.stale, false); assert.equal(item.sync.status, 'unknown');
+  assert.equal(item.deployment.live.sha, oldHead);
+  assert.doesNotMatch(JSON.stringify(snapshot), /private upstream error/);
+});
+
 test('Railway configuration accepts multiple optional targets and rejects malformed or duplicate scopes', () => {
   assert.deepEqual(validateRepos([repo]), [repo]); assert.deepEqual(validateRepos([configured]), [configured]);
   for (const railway of [null, {}, [null], [{ ...target, projectId: 'https://untrusted.test' }],

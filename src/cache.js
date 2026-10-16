@@ -46,7 +46,7 @@ export function createCache({ repos, github, cursor, railway, now = Date.now }) 
             if (!comparisons.has(key)) comparisons.set(key, Promise.resolve().then(() =>
               github.compareDeployment(repo.repo, item.deployment.live.sha, branch)));
             try { sync = await comparisons.get(key); }
-            catch { warning = 'Live deployment is available, but its branch comparison is unavailable.'; }
+            catch { warning = [warning, 'Live deployment is available, but its branch comparison is unavailable.'].filter(Boolean).join(' '); }
           }
           const result = { ...item, sync, warning, stale: false, dataComplete: item.dataComplete !== false && !warning };
           // Retain independently of GitHub so a failed source cannot erase the

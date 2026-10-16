@@ -484,7 +484,7 @@ h3 {
   font-size: 12px;
   font-weight: 700;
 }
-.card-links a + a {
+.card-links a:not([hidden]) ~ a:not([hidden]) {
   background: #26354e;
   color: #e0e8fb;
 }
