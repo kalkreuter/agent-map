@@ -1,4 +1,10 @@
 [
-  { "repo": "kalkreuter/storagestack-manage", "name": "Manage", "color": "#8b9dff" },
-  { "repo": "kalkreuter/storagestack-vivi", "name": "Vivi", "color": "#52d4bc" }
+  { "repo": "kalkreuter/storagestack-manage", "name": "Manage", "color": "#8b9dff",
+    "railway": [{ "name": "Manage production", "environmentName": "production", "branch": "main",
+      "projectId": "d73e6472-4be8-4734-8d93-70cec32b3779", "environmentId": "6ffbc4fa-cd40-4623-ac37-122d6d32dc55",
+      "serviceId": "b3eefe27-b9e3-436f-8b29-57df37d15268" }] },
+  { "repo": "kalkreuter/storagestack-vivi", "name": "Vivi", "color": "#52d4bc",
+    "railway": [{ "name": "Vivi production", "environmentName": "production", "branch": "main",
+      "projectId": "d73e6472-4be8-4734-8d93-70cec32b3779", "environmentId": "6ffbc4fa-cd40-4623-ac37-122d6d32dc55",
+      "serviceId": "968f1ee3-0ab5-4e64-bc80-14907d6308c7" }] }
 ]

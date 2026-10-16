@@ -10,21 +10,21 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="/" aria-label="Agent Map home"><span class="brand-icon">⬡</span><span>AGENT MAP<small>MISSION CONTROL / PHASE 01</small></span></a>
+    <a class="brand" href="/" aria-label="Agent Map home"><span class="brand-icon">⬡</span><span>AGENT MAP<small>MISSION CONTROL / PHASE 02</small></span></a>
     <div class="attention"><strong id="needs-count">—</strong><span>NEEDS ANDRE<small>Your next decisions, in one place.</small></span></div>
     <div class="sync"><span class="live-dot"></span><span id="sync">Connecting…</span></div>
   </header>
   <main>
     <section class="toolbar" aria-label="Map filters">
-      <div><h1>Your work, from above.</h1><p>Every project. Every pull request. One clear next move.</p></div>
+      <div><h1>Your work, from above.</h1><p>Pull requests, agents, and deployments. Every project in view.</p></div>
       <div class="filters">
         <label>PROJECT<select id="repo-filter"><option value="">All projects</option></select></label>
         <label>STATE<select id="state-filter"><option value="">All states</option></select></label>
       </div>
     </section>
     <p id="notice" class="notice" role="status" hidden></p>
-    <section class="map-shell" aria-label="Pull request hex map">
-      <svg id="map" aria-label="Project clusters. Drag to pan, scroll or pinch to zoom." role="group">
+    <section class="map-shell" aria-label="Pull request, agent, and deployment hex map">
+      <svg id="map" aria-label="Project clusters with pull requests, agents, and deployments. Drag to pan, scroll or pinch to zoom. Tab to a tile and press Enter or Space to open details." role="group">
         <defs><pattern id="dots" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1" fill="#242d40"/></pattern></defs>
         <rect width="100%" height="100%" fill="url(#dots)"/>
         <g id="viewport"></g>
@@ -37,14 +37,15 @@
     </section>
     <footer><div id="legend" class="legend" aria-label="State legend"></div><span>READ ONLY <span aria-hidden="true">↗</span></span></footer>
     <aside id="card" class="card" aria-labelledby="card-title" tabindex="-1" hidden>
-      <button id="close-card" class="close" aria-label="Close pull request card">×</button>
+      <button id="close-card" class="close" aria-label="Close detail card">×</button>
       <p id="card-project" class="eyebrow"></p><h2 id="card-title"></h2><span id="card-state" class="state-badge"></span>
       <p id="card-warning" class="card-warning" hidden></p>
-      <dl class="facts"><div><dt id="card-head-label">HEAD COMMIT</dt><dd id="card-head"></dd></div><div><dt id="card-ci-label">CONTINUOUS INTEGRATION</dt><dd id="card-ci"></dd></div></dl>
+      <dl id="card-facts" class="facts"><div><dt id="card-head-label">HEAD COMMIT</dt><dd id="card-head"></dd></div><div><dt id="card-ci-label">CONTINUOUS INTEGRATION</dt><dd id="card-ci"></dd></div></dl>
+      <dl id="card-deployment-facts" class="facts" hidden></dl>
       <div id="review-heading"><h3>Review activity</h3><p class="review-note">Findings are text heuristics; verify resolution in the PR.</p></div>
       <div id="card-reviewers"></div>
       <p id="card-agent" class="review-note" hidden></p>
-      <div class="card-links"><a id="open-pr" target="_blank" rel="noopener noreferrer">Open PR ↗</a><a id="open-agent" target="_blank" rel="noopener noreferrer" hidden>Open agent ↗</a></div>
+      <div class="card-links"><a id="open-pr" target="_blank" rel="noopener noreferrer" hidden>Open PR ↗</a><a id="open-agent" target="_blank" rel="noopener noreferrer" hidden>Open agent ↗</a><a id="open-railway" target="_blank" rel="noopener noreferrer" hidden>Open Railway ↗</a><a id="open-deployment" target="_blank" rel="noopener noreferrer" hidden>Latest deployment / logs ↗</a></div>
     </aside>
   </main>
 </body>

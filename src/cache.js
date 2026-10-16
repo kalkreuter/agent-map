@@ -1,8 +1,9 @@
 import { classify, dayKey, rules, states } from '../config/rules.js';
 import { pollInterval } from './polling.js';
 
-export function createCache({ repos, github, cursor, now = Date.now }) {
+export function createCache({ repos, github, cursor, railway, now = Date.now }) {
   const previous = new Map();
+  const previousDeployments = new Map();
   let snapshot = { updatedAt: null, repos: repos.map(repo => ({ ...repo, stale: false, updatedAt: null })),
     items: [], errors: [], loading: true, states, pollMs: rules.pollMs };
   let pending;
@@ -17,6 +18,43 @@ export function createCache({ repos, github, cursor, now = Date.now }) {
       const errors = [];
       let agents = { byPr: new Map(), unlinked: [] };
       github.beginCycle?.();
+      const comparisons = new Map();
+      const deploymentWork = railway ? Promise.all(repos.map(async repo => {
+        let items;
+        try { items = await railway.collectRepo(repo); if (!Array.isArray(items)) throw new Error(); }
+        catch {
+          items = (repo.railway ?? []).map(target => ({ kind: 'deployment',
+            id: `railway:${target.projectId}:${target.environmentId}:${target.serviceId}`, repo: repo.repo,
+            title: target.name ?? 'Railway deployment', serviceName: target.name ?? 'Railway service',
+            environmentName: target.environmentName ?? 'Environment', branch: target.branch ?? 'main',
+            deployment: { status: 'UNKNOWN', live: null, latest: null }, dataComplete: false,
+            warning: 'Railway unavailable; check service access and token configuration.' }));
+        }
+        return Promise.all(items.map(async item => {
+          if (item.dataComplete === false) {
+            const old = previousDeployments.get(item.id);
+            const warning = `${item.warning || 'Railway deployment unavailable.'}${old ? ' Showing the last successful Railway snapshot.' : ''}`;
+            errors.push(`${repo.name}: ${warning}`);
+            return { ...(old ?? item), warning, stale: true, dataComplete: false };
+          }
+          const branch = item.branch ?? 'main';
+          let sync = { status: 'unknown', branch, headSha: null };
+          let warning = item.warning ?? '';
+          if (item.deployment?.live?.sha) {
+            const key = `${repo.repo}:${branch}:${item.deployment.live.sha}`;
+            if (!comparisons.has(key)) comparisons.set(key, Promise.resolve().then(() =>
+              github.compareDeployment(repo.repo, item.deployment.live.sha, branch)));
+            try { sync = await comparisons.get(key); }
+            catch { warning = 'Live deployment is available, but its branch comparison is unavailable.'; }
+          }
+          const result = { ...item, sync, warning, stale: false, dataComplete: item.dataComplete !== false && !warning };
+          // Retain independently of GitHub so a failed source cannot erase the
+          // other source, and never turn a stale deployment into a fresh one.
+          previousDeployments.set(item.id, result);
+          if (warning) errors.push(`${repo.name}: ${warning}`);
+          return result;
+        }));
+      })).then(groups => groups.flat()) : Promise.resolve([]);
       const collected = await Promise.all(repos.map(async repo => {
         try {
           const items = await github.collectRepo(repo, now());
@@ -39,10 +77,11 @@ export function createCache({ repos, github, cursor, now = Date.now }) {
         return repo ? [{ ...agent, repo: repo.repo }] : [];
       });
       const prCount = collected.reduce((total, repo) => total + repo.items.length, 0);
+      const deployments = await deploymentWork;
       snapshot = { ...snapshot, loading: false, updatedAt: new Date(now()).toISOString(), errors,
         pollMs: pollInterval({ repoCount: repos.length, prCount, ...github.usage?.(), now: now() }),
         repos: collected.map(({ items, ...repo }) => repo),
-        items: [...collected.flatMap(repo => repo.items.map(pr => ({ ...pr, agent: agents.byPr.get(pr.url.toLowerCase()) ?? null }))), ...standalone] };
+        items: [...collected.flatMap(repo => repo.items.map(pr => ({ ...pr, agent: agents.byPr.get(pr.url.toLowerCase()) ?? null }))), ...standalone, ...deployments] };
       return view();
     })().finally(() => { pending = null; });
     return pending;

@@ -25,6 +25,10 @@ function coordinates(count) {
   }
   return result.slice(0, count).map(({ q, r }) => ({ x: R * Math.sqrt(3) * (q + r / 2), y: R * 1.5 * r }));
 }
+function clipped(value, length) {
+  const words = String(value ?? '').replace(/\s+/g, ' ').trim();
+  return words.length > length ? `${words.slice(0, length - 1)}…` : words;
+}
 
 export class HexMap {
   constructor(svg, viewport, onSelect) {
@@ -93,6 +97,7 @@ export class HexMap {
     }
   }
   setItems(items, repos, states, fit = true) {
+    const focusedId = this.viewport.contains(document.activeElement) ? document.activeElement.closest('.tile')?.dataset.id : null;
     this.viewport.replaceChildren();
     const clusters = repos.map(repo => ({ ...repo, items: items.filter(item => item.repo === repo.repo) }))
       .filter(repo => repo.items.length);
@@ -105,31 +110,37 @@ export class HexMap {
       const top = Math.min(...ys) - R, bottom = Math.max(...ys) + R;
       const origin = offsetX - left;
       const group = svgElement('g');
-      const prCount = repo.items.filter(item => item.kind !== 'agent').length;
-      const agentCount = repo.items.length - prCount;
+      const prCount = repo.items.filter(item => item.kind !== 'agent' && item.kind !== 'deployment').length;
+      const agentCount = repo.items.filter(item => item.kind === 'agent').length;
+      const deploymentCount = repo.items.filter(item => item.kind === 'deployment').length;
+      const countLabel = `${prCount} PR${prCount === 1 ? '' : 'S'}${agentCount ? ` · ${agentCount} AGENT${agentCount === 1 ? '' : 'S'}` : ''}${deploymentCount ? ` · ${deploymentCount} DEPLOY${deploymentCount === 1 ? '' : 'S'}` : ''}${repo.stale ? ' · STALE' : ''}`;
       group.append(svgElement('text', { x: offsetX, y: top - 44, fill: repo.color, class: 'cluster-label' }, repo.name.toUpperCase()),
-        svgElement('text', { x: offsetX, y: top - 24, class: 'cluster-count' }, `${prCount} PR${prCount === 1 ? '' : 'S'}${agentCount ? ` · ${agentCount} AGENT${agentCount === 1 ? '' : 'S'}` : ''}${repo.stale ? ' · STALE' : ''}`));
+        svgElement('text', { x: offsetX, y: top - 24, class: 'cluster-count' }, countLabel));
       repo.items.forEach((item, index) => {
-        const point = positions[index], x = origin + point.x, y = point.y, state = states[item.state];
-        const label = item.kind === 'agent' ? 'AGENT' : `#${item.number}`;
+        const point = positions[index], x = origin + point.x, y = point.y;
+        const state = states[item.state] ?? { color: '#8a95a9', symbol: '?', label: 'Unknown' };
+        const isDeployment = item.kind === 'deployment';
+        const label = isDeployment ? 'DEPLOY' : item.kind === 'agent' ? 'AGENT' : `#${item.number}`;
+        const title = isDeployment ? `${item.environmentName || 'Unknown environment'} / ${item.serviceName || item.title}` : item.title;
         const tile = svgElement('g', { class: `tile ${item.state}`, tabindex: '0', role: 'button', 'data-id': item.id,
-          'aria-label': `${repo.name}, ${label}: ${item.title}. ${state.label}`, 'aria-pressed': 'false' });
+          'aria-label': `${repo.name}, ${label}: ${title}. ${state.label}${item.stale ? '. Stale data' : ''}`, 'aria-pressed': 'false' });
         if (state.fadeMs && item.mergedAt) tile.setAttribute('opacity', Math.max(.3, 1 - Math.max(0, Date.now() - Date.parse(item.mergedAt)) / state.fadeMs));
-        tile.append(svgElement('title', {}, `${label} ${item.title} — ${state.label}`),
+        tile.append(svgElement('title', {}, `${label} ${title} — ${state.label}${item.stale ? ' · Stale data' : ''}`),
           svgElement('polygon', { points: hexPoints(x, y), class: 'hex', fill: state.color, 'fill-opacity': '.07', stroke: state.color, 'stroke-opacity': '.6' }),
           svgElement('line', { x1: x - 15, x2: x + 15, y1: y + 49, y2: y + 49, stroke: repo.color, class: 'repo-edge' }),
           svgElement('text', { x, y: y - 25, 'text-anchor': 'middle', fill: state.color, class: 'tile-symbol' }, state.symbol),
           svgElement('text', { x, y: y - 3, 'text-anchor': 'middle', class: 'tile-number' }, label));
-        const words = item.title.replace(/\s+/g, ' ').trim();
-        tile.append(svgElement('text', { x, y: y + 16, 'text-anchor': 'middle', class: 'tile-title' }, words.length > 17 ? `${words.slice(0, 16)}…` : words),
-          svgElement('text', { x, y: y + 30, 'text-anchor': 'middle', class: 'tile-title' }, item.draft ? 'DRAFT' : state.label.toUpperCase()));
+        const words = isDeployment ? `${clipped(item.environmentName || 'unknown', 8)} / ${clipped(item.serviceName || item.title, 10)}` : clipped(item.title, 17);
+        tile.append(svgElement('text', { x, y: y + 16, 'text-anchor': 'middle', class: 'tile-title' }, words),
+          svgElement('text', { x, y: y + 30, 'text-anchor': 'middle', class: 'tile-title' }, item.draft ? 'DRAFT' : clipped(state.label.toUpperCase(), 22)));
         group.append(tile);
       });
       this.viewport.append(group);
       minY = Math.min(minY, top - 60); maxY = Math.max(maxY, bottom);
-      offsetX += right - left + 95;
+      offsetX += Math.max(right - left, repo.name.length * 10, countLabel.length * 7) + 95;
     }
     this.bounds = { x: 0, y: minY, width: Math.max(300, offsetX - 95), height: Math.max(200, maxY - minY) };
     if (fit) this.fit();
+    if (focusedId) [...this.viewport.querySelectorAll('.tile')].find(tile => tile.dataset.id === focusedId)?.focus({ preventScroll: true });
   }
 }
