@@ -4,7 +4,8 @@ import { createGitHub } from '../src/github.js';
 import { createCache } from '../src/cache.js';
 import { head, oldHead, repo, now } from './fixtures.js';
 
-function fixture({ checkStatus = 403, checkHeaders, actionsStatus = 200, statusStatus = 200, statuses = [], runs, clock,
+function fixture({ checkStatus = 403, checkHeaders, checkBody = { message: 'Resource not accessible by personal access token' },
+  actionsStatus = 200, statusStatus = 200, statuses = [], runs, clock,
   reviewStatus = 200, comments = [],
   pulls = [{ number: 1, title: 'Storage PR', head: { sha: head }, labels: [], draft: false }], checks = [] } = {}) {
   const requests = [];
@@ -16,14 +17,16 @@ function fixture({ checkStatus = 403, checkHeaders, actionsStatus = 200, statusS
     if (path.endsWith('/check-runs')) {
       const status = typeof checkStatus === 'function' ? checkStatus() : checkStatus;
       return status === 200 ? Response.json({ check_runs: typeof checks === 'function' ? checks(url) : checks })
-        : new Response('private', { status, headers: checkHeaders });
+        : new Response(typeof checkBody === 'string' ? checkBody : JSON.stringify(checkBody), { status, headers: checkHeaders });
     }
-    if (path.endsWith('/status')) return statusStatus === 200 ? Response.json({ statuses }) : new Response('private', { status: statusStatus });
+    if (path.endsWith('/status')) return statusStatus === 200 ? Response.json({ statuses })
+      : Response.json({ message: 'Resource not accessible by personal access token' }, { status: statusStatus });
     if (path.endsWith('/actions/runs')) return actionsStatus === 200 ? Response.json({ workflow_runs: runs ?? [
       { id: 1, workflow_id: 10, name: 'Test', status: 'completed', conclusion: 'failure' },
       { id: 2, workflow_id: 10, name: 'Test', status: 'completed', conclusion: 'success' },
-    ] }) : new Response('private', { status: actionsStatus });
-    if (path.endsWith('/reviews')) return reviewStatus === 200 ? Response.json([]) : new Response('private', { status: reviewStatus });
+    ] }) : Response.json({ message: 'Resource not accessible by personal access token' }, { status: actionsStatus });
+    if (path.endsWith('/reviews')) return reviewStatus === 200 ? Response.json([])
+      : Response.json({ message: 'Resource not accessible by personal access token' }, { status: reviewStatus });
     if (path.endsWith('/comments')) return Response.json(path.includes('/issues/') ? [] : comments);
     if (path.endsWith('/commits')) return Response.json([]);
     throw new Error(`Unexpected request ${path}`);
@@ -144,13 +147,15 @@ test('rate-limit Checks 403 is retried instead of disabling Checks or falling ba
     { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1' },
     { 'retry-after': '0', 'x-ratelimit-remaining': '20' },
   ]) {
-    let calls = 0;
-    const { client, requests } = fixture({ checkHeaders, checks: [{ id: 1, name: 'Test', status: 'completed', conclusion: 'success' }],
+    let calls = 0, clock = 1000;
+    const { client, requests } = fixture({ checkHeaders, clock: () => clock,
+      checks: [{ id: 1, name: 'Test', status: 'completed', conclusion: 'success' }],
       checkStatus: () => ++calls === 1 ? 403 : 200 });
     const [blocked] = await client.collectRepo(repo, now);
     assert.equal(blocked.dataComplete, false); assert.equal(blocked.ci.source, 'checks');
     assert.match(blocked.warning, /CI check runs unavailable: GitHub rate limit reached/);
     assert.equal(requests.some(request => request.url.pathname.endsWith('/actions/runs')), false);
+    clock += 60_000;
     const [recovered] = await client.collectRepo(repo, now);
     assert.equal(recovered.ci.source, 'checks'); assert.equal(recovered.ci.state, 'success'); assert.equal(recovered.dataComplete, true);
     assert.equal(calls, 2);
@@ -161,6 +166,44 @@ test('Checks 403 with remaining quota still falls back and is remembered', async
   const [item] = await client.collectRepo(repo, now); await client.collectRepo(repo, now);
   assert.equal(item.ci.source, 'actions'); assert.equal(item.dataComplete, true);
   assert.equal(requests.filter(request => request.url.pathname.endsWith('/check-runs')).length, 1);
+});
+for (const warmup of [false, true]) test(`headerless secondary Checks 403 recovers with ${warmup ? 'known' : 'unknown'} permission`, async () => {
+  let clock = 1000, checkStatus = warmup ? 200 : 403, calls = 0;
+  const { client, requests } = fixture({ clock: () => clock, checkStatus: () => { calls++; return checkStatus; },
+    checkHeaders: { 'x-ratelimit-remaining': '3000', 'x-ratelimit-reset': '3601' },
+    checkBody: { message: 'You have exceeded a secondary rate limit. Private response details.' },
+    checks: [{ id: 1, name: 'Test', status: 'completed', conclusion: 'success' }] });
+  if (warmup) { await client.collectRepo(repo, now); checkStatus = 403; }
+  const [limited] = await client.collectRepo(repo, now);
+  assert.equal(limited.ci.source, 'checks'); assert.equal(limited.dataComplete, false);
+  assert.match(limited.warning, /CI check runs unavailable: GitHub rate limit reached/);
+  assert.doesNotMatch(JSON.stringify(limited), /Private response details/);
+  assert.equal(client.usage().retryAt, 61_000);
+  const beforeWait = calls;
+  clock = 60_999;
+  await assert.rejects(client.collectRepo(repo, now), error => error.status === 429);
+  assert.equal(calls, beforeWait);
+  clock = 61_000; checkStatus = 200;
+  const [recovered] = await client.collectRepo(repo, now);
+  assert.equal(recovered.ci.source, 'checks'); assert.equal(recovered.ci.state, 'success');
+  assert.equal(recovered.dataComplete, true); assert.equal(calls, beforeWait + 1);
+  assert.equal(requests.some(request => request.url.pathname.endsWith('/actions/runs')), false);
+});
+for (const checkBody of [{ message: 'Forbidden' }, 'Private non-JSON response']) test(`ambiguous ${typeof checkBody === 'string' ? 'non-JSON' : 'JSON'} Checks 403 remains retryable`, async () => {
+  let clock = 1000, calls = 0;
+  const { client, requests } = fixture({ clock: () => clock, checkBody,
+    checkHeaders: { 'x-ratelimit-remaining': '3000' }, checkStatus: () => ++calls === 1 ? 403 : 200,
+    checks: [{ id: 1, name: 'Test', status: 'completed', conclusion: 'success' }] });
+  const [blocked] = await client.collectRepo(repo, now);
+  assert.equal(blocked.ci.source, 'checks'); assert.equal(blocked.dataComplete, false);
+  assert.match(blocked.warning, /CI check runs unavailable: GitHub request failed \(403\)/);
+  assert.doesNotMatch(JSON.stringify(blocked), /Forbidden|Private non-JSON/);
+  assert.equal(client.usage().retryAt, 61_000);
+  await assert.rejects(client.collectRepo(repo, now), error => error.status === 429);
+  clock = 61_000;
+  const [recovered] = await client.collectRepo(repo, now);
+  assert.equal(recovered.ci.source, 'checks'); assert.equal(recovered.dataComplete, true);
+  assert.equal(calls, 2); assert.equal(requests.some(request => request.url.pathname.endsWith('/actions/runs')), false);
 });
 for (const warmup of [false, true]) {
   for (const [name, checkHeaders] of [

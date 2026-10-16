@@ -128,3 +128,40 @@ test('secondary Retry-After is respected and actual cycle request count adjusts 
   const cache = createCache({ repos: [repo], github: { collectRepo: async () => [pr()], usage: () => ({ requests: 1000 }) }, now: () => now });
   assert.ok((await cache.refresh()).pollMs >= 1_440_000);
 });
+test('GitHub secondary throttle responses pause requests for at least one minute without exposing their bodies', async () => {
+  for (const [body, headers] of [
+    [{ message: 'You have exceeded a secondary rate limit. Private details.' }, { 'x-ratelimit-remaining': '3000' }],
+    [{ message: 'You have triggered an abuse detection mechanism. Private details.' }, {}],
+    [{ message: 'Private details.', documentation_url: 'https://docs.github.com/rest/using-the-rest-api/rate-limits-for-the-rest-api#about-secondary-rate-limits' }, {}],
+    [{ message: 'Private details.' }, { 'retry-after': '0' }],
+    [{ message: 'Private details.' }, { 'retry-after': '120' }],
+  ]) {
+    let calls = 0, clock = 1000;
+    const reader = createReader({ origin: 'https://api.github.com', service: 'GitHub', now: () => clock,
+      fetchImpl: async () => ++calls === 1 ? Response.json(body, { status: 403, headers }) : Response.json([]) });
+    await assert.rejects(reader.get('/one'), error => {
+      assert.equal(error.status, 403); assert.equal(error.rateLimited, true);
+      assert.notEqual(error.permissionDenied, true);
+      assert.doesNotMatch(error.message + JSON.stringify(error), /Private details/);
+      return true;
+    });
+    const retryAt = 1000 + Math.max(60, Number(headers['retry-after']) || 0) * 1000;
+    assert.equal(reader.usage().retryAt, retryAt);
+    clock = retryAt - 1; await assert.rejects(reader.get('/two'), error => error.status === 429);
+    assert.equal(calls, 1);
+    clock = retryAt; assert.deepEqual((await reader.get('/two')).data, []); assert.equal(calls, 2);
+  }
+});
+test('GitHub explicit permission denials are identified without a throttle delay or private error body', async () => {
+  for (const message of ['Resource not accessible by personal access token', 'Resource not accessible by integration']) {
+    const reader = createReader({ origin: 'https://api.github.com', service: 'GitHub', now: () => 1000,
+      fetchImpl: async () => Response.json({ message, private: 'Private details.' },
+        { status: 403, headers: { 'x-ratelimit-remaining': '3000' } }) });
+    await assert.rejects(reader.get('/one'), error => {
+      assert.equal(error.permissionDenied, true); assert.notEqual(error.rateLimited, true);
+      assert.doesNotMatch(error.message + JSON.stringify(error), /Private details|Resource not accessible/);
+      return true;
+    });
+    assert.equal(reader.usage().retryAt, 0);
+  }
+});

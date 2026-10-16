@@ -19,6 +19,20 @@ test('low remaining quota and exhausted quota defer requests toward reset', () =
   assert.equal(pollInterval({ retryAt: now + 120_000, now }), 120_000);
   assert.equal(pollInterval({ prCount: 10, remaining: 80, resetAt, now }), resetAt - now + 1000);
 });
+test('a cycle that exceeds remaining quota waits for reset even above the low-quota threshold', () => {
+  const now = 1000, resetAt = now + 3600_000;
+  for (const workload of [
+    { repoCount: 2, prCount: 80, remaining: 550 },
+    { repoCount: 2, prCount: 1, requests: 700, remaining: 600 },
+  ]) {
+    assert.ok(workload.remaining >= rules.polling.hourlyLimit * rules.polling.lowRemainingFraction);
+    assert.equal(pollInterval({ ...workload, resetAt, now }), resetAt - now + 1000);
+    assert.ok(pollInterval({ ...workload, now }) >= rules.polling.fallbackBackoffMs);
+    assert.equal(pollInterval({ ...workload, resetAt: now - 1, now }), pollInterval({ ...workload, now, remaining: undefined }));
+  }
+  assert.equal(pollInterval({ repoCount: 2, prCount: 80, remaining: 564, resetAt, now }),
+    pollInterval({ repoCount: 2, prCount: 80 }));
+});
 test('scheduler waits for each refresh, uses its interval, and cancels on shutdown', async () => {
   let finish, scheduled, cancelled;
   const cache = { refresh: () => new Promise(resolve => { finish = resolve; }), view: () => ({ pollMs: 240_000 }) };

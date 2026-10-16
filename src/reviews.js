@@ -38,8 +38,13 @@ function checkReview(reviewer, checkRuns, headSha) {
   // Conflicting result lines must not let a clean result hide reported issues.
   const clean = config.clean.test(output) && reportedIssues === 0;
   if (!clean && !counts.length) return;
-  return { kind: 'check', body: '', at: latest.completed_at, commit_id: headSha,
+  return { kind: 'check', body: '', at: latest.completed_at, startedAt: latest.started_at, commit_id: headSha,
     clearOutdated: clean && config.supersedesOutdatedFindings, reportedIssues };
+}
+
+function duringCheck(at, check) {
+  const timestamp = Date.parse(at);
+  return Date.parse(check?.startedAt) <= timestamp && timestamp <= Date.parse(check?.at);
 }
 
 function supersededByCheck(item, check) {
@@ -73,7 +78,13 @@ export function summarizeReviews({ reviews, comments, issueComments, headSha, ow
     const summaries = own.filter(item => item.kind !== 'inline' && hasFinding(item.body)
       && !reviewer.ignoreFindingSummary?.test(item.body ?? '')
       && (item.kind !== 'review' || !roots.some(root => root.pull_request_review_id === item.id && hasFinding(root.body))));
+    // Original creation plus the trusted parent review ties details to this run.
+    // Edits to an earlier run's comments cannot account for newly reported issues.
+    const currentReviewIds = new Set(own.filter(item => item.kind === 'review'
+      && reviewedSha(item) === headSha && duringCheck(item.at, check)).map(item => item.id));
     const coveredIssues = roots.filter(item => reviewedSha(item) === headSha
+      && item.pull_request_review_id != null && currentReviewIds.has(item.pull_request_review_id)
+      && duringCheck(item.created_at, check)
       && (hasFinding(item.body) || rules.nonBlockingSeverity.test(item.body ?? ''))).length;
     const incomplete = check && check.reportedIssues > coveredIssues;
     const sorted = own.filter(item => item.at).sort((a, b) => Date.parse(b.at) - Date.parse(a.at));

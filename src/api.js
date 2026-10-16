@@ -5,6 +5,18 @@ export class ApiError extends Error {
   }
 }
 
+async function githubForbidden(response) {
+  let data;
+  try { data = await response.json(); } catch { return {}; }
+  const message = typeof data?.message === 'string' ? data.message : '';
+  // Inspect only to classify the response; never retain its private body on errors.
+  return {
+    secondary: /\bsecondary rate limits?\b|\babuse detection mechanism\b/i.test(message)
+      || /^https:\/\/docs\.github\.com\/.*#(?:about-)?secondary-rate-limits$/.test(data?.documentation_url ?? ''),
+    permissionDenied: /^Resource not accessible by (?:personal access token|integration)\.?$/i.test(message),
+  };
+}
+
 // Fixed origins + GET-only transport: no caller can issue a service mutation or
 // redirect an authorization header to another origin. Never expose API bodies.
 export function createReader({ origin, headers, service, fetchImpl = fetch, now = Date.now }) {
@@ -31,8 +43,17 @@ export function createReader({ origin, headers, service, fetchImpl = fetch, now 
     if (response.status === 304 && cached) return cached.result;
     if (!response.ok) {
       const error = new ApiError(service, response.status);
-      // Primary limits send remaining 0; secondary limits send Retry-After. Both use 403 or 429.
       if (response.status === 403 && (remaining === '0' || retry)) error.rateLimited = true;
+      if (response.status === 403 && origin === 'https://api.github.com') {
+        const reason = await githubForbidden(response);
+        if (reason.secondary) error.rateLimited = true;
+        if (!error.rateLimited && reason.permissionDenied) error.permissionDenied = true;
+        // Secondary limits can omit Retry-After and leave primary quota intact.
+        // An unrecognized 403 may also be a throttle, so retry it conservatively.
+        if (reason.secondary || retry || (!error.rateLimited && !error.permissionDenied)) {
+          retryAt = Math.max(retryAt, now() + 60_000);
+        }
+      }
       throw error;
     }
     const result = { data: await response.json(), hasNext: /rel="next"/.test(response.headers.get('link') ?? '') };

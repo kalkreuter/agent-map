@@ -5,10 +5,12 @@ import { classify } from '../config/rules.js';
 import { head, oldHead, now, pr } from './fixtures.js';
 
 const completedAt = '2026-10-15T17:00:00Z';
+const startedAt = '2026-10-15T16:50:00Z';
+const postedAt = '2026-10-15T16:59:00Z';
 const cleanText = '**Final Result:** Bugbot completed review - no issues found! ✅';
 function check(overrides = {}) {
   return { id: 12, name: 'Cursor Bugbot', app: { slug: 'cursor' }, head_sha: head,
-    status: 'completed', conclusion: 'success', completed_at: completedAt,
+    status: 'completed', conclusion: 'success', started_at: startedAt, completed_at: completedAt,
     output: { summary: cleanText }, ...overrides };
 }
 function finding(overrides = {}) {
@@ -19,6 +21,18 @@ function finding(overrides = {}) {
 }
 function summarize(overrides = {}) {
   return summarizeReviews({ reviews: [], comments: [], issueComments: [], checkRuns: [], headSha: head, owner: 'kalkreuter', ...overrides });
+}
+function review(overrides = {}) {
+  return { id: 7, user: { login: 'cursor[bot]' }, performed_via_github_app: { slug: 'cursor' },
+    state: 'COMMENTED', commit_id: head, submitted_at: postedAt, body: '', ...overrides };
+}
+function currentFinding(overrides = {}) {
+  return finding({ commit_id: head, original_commit_id: head, created_at: postedAt,
+    pull_request_review_id: 7, ...overrides });
+}
+function issueCheck(count = 1, overrides = {}) {
+  return check({ conclusion: 'neutral', output: { summary:
+    `**Final Result:** Bugbot completed review and found ${count} potential issues.` }, ...overrides });
 }
 test('a verified clean check counts as a current-head Bugbot review without a new comment', () => {
   const reviews = ['chatgpt-codex-connector[bot]', 'claude[bot]'].map((login, id) => ({ id,
@@ -83,16 +97,71 @@ test('a clean result cannot override an explicit issue count elsewhere in check 
 test('conflicting reported issue counts retain the largest count until details are available', () => {
   const output = { summary: '**Final Result:** Bugbot completed review and found 1 potential issue.',
     text: '**Final Result:** Bugbot completed review and found 2 potential issues.' };
-  const comments = [finding({ original_commit_id: head, body: '[P3] Low severity: improve wording' })];
-  const reviewer = summarize({ comments, checkRuns: [check({ output })] })[0];
+  const comments = [currentFinding({ body: '[P3] Low severity: improve wording' })];
+  const reviewer = summarize({ reviews: [review()], comments, checkRuns: [check({ output })] })[0];
   assert.equal(reviewer.currentHead, true); assert.equal(reviewer.openFindings, null);
   assert.equal(reviewer.complete, false);
 });
 test('known blocking and low-severity comments cover the reported issue count without double counting', () => {
-  const checkRuns = [check({ conclusion: 'neutral', output: { summary: '**Final Result:** Bugbot completed review and found 2 potential issues.' } })];
-  const comments = [finding({ original_commit_id: head }), finding({ id: 2, original_commit_id: head, body: '[P3] Low severity: improve wording' })];
-  const reviewer = summarize({ checkRuns, comments })[0];
+  const checkRuns = [issueCheck(2)], reviews = [review()];
+  const comments = [currentFinding(), currentFinding({ id: 2, body: '[P3] Low severity: improve wording' })];
+  const reviewer = summarize({ reviews, checkRuns, comments })[0];
   assert.equal(reviewer.openFindings, 1); assert.equal(reviewer.complete, true);
   comments[0].body = '[P3] Low severity: improve wording';
-  assert.equal(summarize({ checkRuns, comments })[0].openFindings, 0);
+  const lowOnly = summarize({ reviews, checkRuns, comments })[0];
+  assert.equal(lowOnly.openFindings, 0); assert.equal(lowOnly.complete, true);
+});
+test('earlier same-head low and resolved comments cannot cover a newer run even when edited', () => {
+  const earlierAt = '2026-10-15T16:00:00Z';
+  const reviews = [review({ submitted_at: earlierAt }), ...['chatgpt-codex-connector[bot]', 'claude[bot]']
+    .map((login, id) => review({ id: id + 8, user: { login }, performed_via_github_app: undefined }))];
+  const oldRun = issueCheck(1, { id: 11, started_at: '2026-10-15T15:50:00Z', completed_at: earlierAt });
+  for (const root of [
+    currentFinding({ created_at: earlierAt, body: '[P3] Low severity: improve wording' }),
+    currentFinding({ created_at: earlierAt, updated_at: postedAt, body: '[P3] Low severity: improve wording' }),
+    currentFinding({ created_at: earlierAt, updated_at: postedAt }),
+  ]) {
+    const comments = [root, { id: 2, in_reply_to_id: root.id, user: { login: 'kalkreuter' },
+      body: 'Fixed in this head', created_at: '2026-10-15T16:10:00Z' }];
+    const reviewers = summarize({ reviews, comments, checkRuns: [oldRun, issueCheck()] });
+    assert.equal(reviewers[0].currentHead, true); assert.equal(reviewers[0].openFindings, null);
+    assert.equal(reviewers[0].complete, false);
+    assert.equal(classify(pr({ draft: true, reviewers }), now), 'DRAFT_IDLE');
+  }
+});
+test('issue coverage requires original comment creation inside a valid latest check window', () => {
+  for (const checkOverrides of [
+    { started_at: undefined }, { started_at: null }, { started_at: 'unknown' },
+    { started_at: '2026-10-15T17:01:00Z' },
+  ]) {
+    const result = summarize({ reviews: [review()], comments: [currentFinding({ body: '[P3] Low severity' })],
+      checkRuns: [issueCheck(1, checkOverrides)] })[0];
+    assert.equal(result.complete, false); assert.equal(result.openFindings, null);
+  }
+  for (const created_at of [undefined, 'unknown', '2026-10-15T16:49:59Z', '2026-10-15T17:00:01Z']) {
+    const result = summarize({ reviews: [review()], comments: [currentFinding({ created_at, updated_at: postedAt,
+      body: '[P3] Low severity' })], checkRuns: [issueCheck()] })[0];
+    assert.equal(result.complete, false); assert.equal(result.openFindings, null);
+  }
+});
+test('issue coverage requires the current run trusted parent review, not a stale or missing review', () => {
+  const comments = [currentFinding({ body: '[P3] Low severity' })], checkRuns = [issueCheck()];
+  for (const reviews of [
+    [], [review({ id: 8 })], [review({ commit_id: oldHead })],
+    [review({ user: { login: 'stranger' }, performed_via_github_app: undefined })],
+    [review({ state: 'PENDING' })], [review({ state: 'DISMISSED' })],
+    [review({ submitted_at: undefined })], [review({ submitted_at: 'unknown' })],
+    [review({ submitted_at: '2026-10-15T16:49:59Z' })], [review({ submitted_at: '2026-10-15T17:00:01Z' })],
+  ]) {
+    const result = summarize({ reviews, comments, checkRuns })[0];
+    assert.equal(result.complete, false); assert.equal(result.openFindings, null);
+  }
+  const result = summarize({ reviews: [review()], comments: [{ ...comments[0], pull_request_review_id: undefined }], checkRuns })[0];
+  assert.equal(result.complete, false); assert.equal(result.openFindings, null);
+});
+test('a current-run finding resolved afterward still accounts for its reported issue', () => {
+  const comments = [currentFinding(), { id: 2, in_reply_to_id: 1, user: { login: 'kalkreuter' },
+    body: 'Fixed in the latest commit', created_at: '2026-10-15T17:01:00Z' }];
+  const result = summarize({ reviews: [review()], comments, checkRuns: [issueCheck()] })[0];
+  assert.equal(result.openFindings, 0); assert.equal(result.complete, true);
 });
