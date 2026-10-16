@@ -1,6 +1,6 @@
 import { HexMap } from './hex-map.js';
 const $ = id => document.getElementById(id);
-let snapshot, selectedId, pollTimer;
+let snapshot, selectedId, pollTimer, configurationKey;
 const map = new HexMap($('map'), $('viewport'), openCard);
 const repoFilter = $('repo-filter'), stateFilter = $('state-filter');
 
@@ -105,7 +105,6 @@ function openCard(id, focus = true) {
   safeLink($('open-pr'), isAgent || isDeployment ? undefined : item.url, 'https://github.com');
   safeLink($('open-agent'), isDeployment ? undefined : item.agent?.url, 'https://cursor.com');
   safeLink($('open-railway'), isDeployment ? item.url : undefined, 'https://railway.com');
-  safeLink($('open-deployment'), isDeployment ? item.deployment?.latest?.url : undefined, 'https://railway.com');
   $('card-agent').hidden = !item.agent || isAgent || isDeployment;
   $('card-agent').textContent = !isDeployment && item.agent ? `Cursor agent: ${item.agent.status.toLowerCase()}` : '';
   $('card').hidden = false; map.select(id); if (focus) $('card').focus({ preventScroll: true });
@@ -126,6 +125,13 @@ function render(fit = false) {
   if (selectedId && items.some(item => item.id === selectedId)) openCard(selectedId, false); else closeCard();
 }
 function configure(data) {
+  // Polling changes timestamps and items without changing these controls.
+  // Keep option nodes intact while a user is choosing a filter.
+  const key = JSON.stringify({
+    repos: data.repos.map(repo => [repo.repo, repo.name, repo.color]),
+    states: Object.entries(data.states).map(([id, state]) => [id, state.label, state.color, state.symbol]),
+  });
+  if (key === configurationKey) return;
   const selectedRepo = repoFilter.value, selectedState = stateFilter.value;
   repoFilter.replaceChildren(new Option('All projects', ''));
   stateFilter.replaceChildren(new Option('All states', ''));
@@ -138,6 +144,7 @@ function configure(data) {
   }
   repoFilter.value = [...repoFilter.options].some(option => option.value === selectedRepo) ? selectedRepo : '';
   stateFilter.value = [...stateFilter.options].some(option => option.value === selectedState) ? selectedState : '';
+  configurationKey = key;
 }
 async function poll() {
   try {

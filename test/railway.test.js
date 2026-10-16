@@ -101,6 +101,37 @@ test('overlapping active successes select the newest running deployment independ
   }
 });
 
+test('malformed active records do not discard a healthy live deployment or the latest attempt', async () => {
+  const latest = node({ id: 'new-attempt', status: 'FAILED', meta: { commitHash: newerSha } });
+  const invalid = node({ id: 'private-secret', createdAt: 'invalid-private-timestamp', meta: { private: 'private-metadata' } });
+  for (const active of [[null, invalid, node()], [node(), invalid, null]]) {
+    const { client } = fixture(body({ latest, active }));
+    const [item] = await client.collectRepo(repo);
+    assert.equal(item.deployment.status, 'FAILED'); assert.equal(item.deployment.latest.id, 'new-attempt');
+    assert.equal(item.deployment.live.id, 'deployment-1'); assert.equal(item.deployment.live.sha, sha);
+    assert.equal(item.dataComplete, true); assert.equal(item.warning, 'Railway could not verify all active deployments.');
+    assert.doesNotMatch(JSON.stringify(item), /private-secret|invalid-private-timestamp|private-metadata/);
+  }
+});
+
+test('invalid latest remains a target error even when an active deployment is healthy', async () => {
+  const { client } = fixture(body({ latest: node({ createdAt: 'invalid-private-timestamp' }) }));
+  const [item] = await client.collectRepo(repo);
+  assert.equal(item.dataComplete, false); assert.match(item.warning, /invalid API response/);
+  assert.deepEqual(item.deployment, { status: 'UNKNOWN', latest: null, live: null });
+  assert.doesNotMatch(JSON.stringify(item), /invalid-private-timestamp/);
+});
+
+test('all-invalid active records leave live unknown and never promote a historical latest success', async () => {
+  const { client } = fixture(body({ active: [null, node({ id: {} }),
+    node({ createdAt: 'invalid-private-timestamp' }), node({ deploymentStopped: undefined })] }));
+  const [item] = await client.collectRepo(repo);
+  assert.equal(item.deployment.latest.status, 'SUCCESS'); assert.equal(item.deployment.latest.sha, sha);
+  assert.equal(item.deployment.live, null); assert.equal(item.dataComplete, true);
+  assert.equal(item.warning, 'Railway could not verify all active deployments.');
+  assert.doesNotMatch(JSON.stringify(item), /invalid-private-timestamp/);
+});
+
 test('no deployments remains explicitly UNKNOWN with no inferred live SHA', async () => {
   const { client } = fixture(body({ latest: null, active: [] }));
   const [item] = await client.collectRepo(repo);
@@ -183,7 +214,6 @@ test('malformed response fields or scope mismatches never establish a live deplo
     data => { data.serviceInstance.latestDeployment.createdAt = 'private-secret'; },
     data => { data.serviceInstance.latestDeployment.id = { private: 'secret' }; },
     data => { data.serviceInstance.latestDeployment.deploymentStopped = null; },
-    data => { data.serviceInstance.activeDeployments = [null]; },
   ];
   for (const change of changes) {
     const payload = body(); change(payload.data);

@@ -13,7 +13,8 @@ const live = { id: 'live', status: 'SUCCESS', sha: oldHead, createdAt: new Date(
 function deployment(overrides = {}) {
   return { kind: 'deployment', id: `railway:${target.projectId}:${target.environmentId}:${target.serviceId}`,
     repo: repo.repo, title: 'Manage production', branch: 'main', collectedAt: new Date(now).toISOString(),
-    deployment: { status: 'SUCCESS', latest: live, live }, dataComplete: true, warning: '', ...overrides };
+    deployment: { status: 'SUCCESS', latest: live, live }, sync: { status: 'current', branch: 'main', headSha: oldHead },
+    dataComplete: true, warning: '', ...overrides };
 }
 
 test('deployment states distinguish live, behind, pending, failed, and stale without becoming PR approval items', () => {
@@ -27,7 +28,18 @@ test('deployment states distinguish live, behind, pending, failed, and stale wit
   }
   assert.equal(classify(deployment({ stale: true })), 'DEPLOY_UNKNOWN');
   assert.equal(classify(deployment({ deployment: { status: 'SUCCESS', latest: live, live: null } })), 'DEPLOY_UNKNOWN');
-  assert.equal(classify(deployment({ sync: { status: 'unknown' }, dataComplete: false })), 'DEPLOY_LIVE');
+  assert.equal(classify(deployment({ sync: { status: 'unknown' }, dataComplete: false })), 'DEPLOY_UNVERIFIED');
+});
+
+test('active deployments are green only when their branch comparison and source data are verified', () => {
+  for (const status of ['ahead', 'diverged', 'unknown']) {
+    assert.equal(classify(deployment({ sync: { status } })), 'DEPLOY_UNVERIFIED');
+  }
+  assert.equal(classify(deployment({ sync: undefined })), 'DEPLOY_UNVERIFIED');
+  assert.equal(classify(deployment({ dataComplete: false, warning: 'Some active records could not be verified.' })), 'DEPLOY_UNVERIFIED');
+  assert.equal(classify(deployment({ dataComplete: false, sync: { status: 'behind' } })), 'DEPLOY_UNVERIFIED');
+  assert.equal(classify(deployment({ sync: { status: 'behind' } })), 'DEPLOY_BEHIND');
+  assert.equal(classify(deployment()), 'DEPLOY_LIVE');
 });
 
 test('deployment comparison proves branch ancestry instead of treating every different SHA as behind', async () => {
@@ -72,7 +84,7 @@ test('optional deployment collection retains previous service data as stale and 
   const stale = await cache.refresh();
   assert.equal(stale.items[0].dataComplete, true); assert.equal(stale.items[1].stale, true);
   assert.equal(stale.items[1].state, 'DEPLOY_UNKNOWN'); assert.equal(stale.items[1].deployment.live.sha, oldHead);
-  assert.match(stale.items[1].warning, /last successful/); assert.equal(comparisons, 1);
+  assert.match(stale.items[1].warning, /previously collected Railway data/); assert.equal(comparisons, 1);
   fail = false;
   assert.equal((await cache.refresh()).items[1].state, 'DEPLOY_BEHIND'); assert.equal(comparisons, 2);
   const without = await createCache({ repos: [configured], github }).refresh();
@@ -106,4 +118,21 @@ test('Railway configuration accepts multiple optional targets and rejects malfor
     assert.throws(() => validateRepos([{ ...repo, railway }]));
   }
   assert.throws(() => validateRepos([configured, { ...configured, repo: 'owner/another' }]));
+});
+
+test('an incomplete branch comparison remains clearly incomplete when later Railway reads fail', async () => {
+  let railwayFails = false;
+  const github = { collectRepo: async () => [pr()], compareDeployment: async () => { throw new Error('private'); } };
+  const railway = { collectRepo: async () => [railwayFails
+    ? deployment({ dataComplete: false, warning: 'Railway unavailable.' }) : deployment()] };
+  const cache = createCache({ repos: [configured], github, railway, now: () => now });
+  const first = await cache.refresh();
+  assert.equal(first.items[1].state, 'DEPLOY_UNVERIFIED'); assert.equal(first.items[1].dataComplete, false);
+  railwayFails = true;
+  const second = await cache.refresh();
+  assert.equal(second.items[1].state, 'DEPLOY_UNKNOWN'); assert.equal(second.items[1].sync.status, 'unknown');
+  assert.equal(second.items[1].deployment.live.sha, oldHead);
+  assert.match(second.items[1].warning, /previously collected Railway data/);
+  assert.doesNotMatch(second.items[1].warning, /successful|private/);
+  assert.equal(second.items[0].dataComplete, true);
 });

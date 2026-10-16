@@ -33,7 +33,7 @@ export function createCache({ repos, github, cursor, railway, now = Date.now }) 
         return Promise.all(items.map(async item => {
           if (item.dataComplete === false) {
             const old = previousDeployments.get(item.id);
-            const warning = `${item.warning || 'Railway deployment unavailable.'}${old ? ' Showing the last successful Railway snapshot.' : ''}`;
+            const warning = `${item.warning || 'Railway deployment unavailable.'}${old ? ' Showing previously collected Railway data.' : ''}`;
             errors.push(`${repo.name}: ${warning}`);
             return { ...(old ?? item), sync: old?.sync ?? { status: 'unknown', branch: item.branch ?? 'main', headSha: null },
               warning, stale: true, dataComplete: false };

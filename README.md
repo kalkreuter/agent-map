@@ -55,11 +55,35 @@ Manage and Vivi include their existing production service IDs in `config/repos.j
 
 Use the IDs from the Railway dashboard URL. IDs are configuration, never credentials; tokens belong only in server environment variables. Labels and tracked `branch` are optional; the branch defaults to `main`. Each project/environment/service combination must be unique across the config. The integration uses the [Railway public API](https://docs.railway.com/integrations/api) at `https://backboard.railway.com/graphql/v2` with a static named query, variables for IDs, a 15-second timeout, and redirects disabled. No GraphQL mutations are implemented. Project tokens are scoped to one Railway project/environment; an account/workspace token can query its accessible projects. The app's read-only behavior does not change the token's upstream permissions.
 
-Each deployment card separates the **latest attempt** from the **actual live deployment**. A failed or building attempt can coexist with an older successful active version. Historical successful or stopped deployments are never used to guess which commit is live. The tile shows deploying, deploy failed, live, live/behind, or unknown; deployment tiles never contribute to the Needs Andre PR count. The card provides service/environment, status, live commit and age, latest attempt, collection time, and Railway links.
+Each deployment card separates the **latest attempt** from the **actual live deployment**. A failed or building attempt can coexist with an older successful active version. Historical successful or stopped deployments are never used to guess which commit is live. The tile shows deploying, deploy failed, live, live/behind, live/unverified, or unknown; deployment tiles never contribute to the Needs Andre PR count. Green **Live** requires complete data and a verified match with the tracked branch. Ahead, diverged, missing-SHA, missing-comparison, and incomplete-data cases show amber **Live / unverified** while still retaining the known running version. The card provides service/environment, status, live commit and age, latest attempt, collection time, and an Open Railway service-console link. Deployment logs are available from that console; the app does not present an unavailable direct logs link.
 
 Only a full Git SHA reported for the live deployment is compared with the configured branch using GitHub's branch and commit-comparison APIs (existing Contents read permission). Equality means current; ancestry distinguishes behind, ahead, and diverged. Different hashes alone do not prove production is behind. Manual/image deployments without a SHA, missing branch access, or failed comparisons show an unknown comparison. The configured branch is the comparison target, not a claim about the deployment's original source branch.
 
-Railway polls share the existing server refresh. Errors are isolated per service and never erase GitHub PR details. A failed service read retains its previous snapshot with an explicit stale notice and an unknown tile state; fresh Railway data remains visible when GitHub fails. Rate limits honor `Retry-After` and defer further Railway calls. Branch-comparison requests count toward observed GitHub polling cost. Neither raw deployment metadata, API error bodies, nor tokens are sent to the browser.
+Railway polls share the existing server refresh. Errors are isolated per service and never erase GitHub PR details. Malformed active records are skipped with a generic warning while valid live/latest details remain available; an invalid latest attempt still fails the target. A failed service read retains previously collected Railway data with an explicit stale notice and an unknown tile state, without claiming that an earlier branch comparison was complete. Fresh Railway data remains visible when GitHub fails. Rate limits honor `Retry-After` and defer further Railway calls. Branch-comparison requests count toward observed GitHub polling cost. Neither raw deployment metadata, API error bodies, nor tokens are sent to the browser. Filters and the legend retain their DOM nodes during unchanged polls and update only when their descriptors change.
+
+Before enabling Railway in production, verify the exact collector query with the intended token from a local, ignored `.env` file. The official CLI uses project tokens with `environment(id:, projectId:)`; that does not prove authorization for this collector's full query, including `service(id:)`. The following read-only check calls that same query for each configured target, prints only labels and sanitized outcomes, and exits nonzero for missing access or incomplete data. It does not start the dashboard or change Railway configuration:
+
+```sh
+node --env-file=.env --input-type=module <<'JS'
+import { readFile } from 'node:fs/promises';
+import { createRailway } from './src/railway.js';
+import { validateRepos } from './src/config.js';
+const token = process.env.RAILWAY_PROJECT_TOKEN || process.env.RAILWAY_API_TOKEN;
+if (!token) throw new Error('Set a Railway token in your local .env file first.');
+const client = createRailway(token, undefined, { authMode: process.env.RAILWAY_PROJECT_TOKEN ? 'project' : 'account' });
+const repos = validateRepos(JSON.parse(await readFile('config/repos.json', 'utf8')));
+if (!repos.some(repo => repo.railway?.length)) throw new Error('Configure a Railway target first.');
+let failed = false;
+for (const repo of repos) {
+  for (const item of await client.collectRepo(repo)) {
+    const ok = item.dataComplete && !item.warning;
+    console.log(`${repo.name} / ${item.title}: ${ok ? 'query OK' : item.warning}`);
+    failed ||= !ok;
+  }
+}
+process.exitCode = failed ? 1 : 0;
+JS
+```
 
 All state precedence, time windows, timezone, reviewer identities, label names, and finding heuristics live in **`config/rules.js`**, separate from the renderer. First matching rule wins:
 

@@ -399,7 +399,8 @@ h2 {
   color: #ff8790;
   border-color: #824953;
 }
-.state-badge[data-state="DEPLOY_BEHIND"] {
+.state-badge[data-state="DEPLOY_BEHIND"],
+.state-badge[data-state="DEPLOY_UNVERIFIED"] {
   color: #f4bb65;
 }
 .state-badge[data-state="DEPLOY_UNKNOWN"] {

@@ -63,12 +63,23 @@ function resultData(body, target) {
     || !Array.isArray(instance.activeDeployments)
     || !Object.hasOwn(instance, 'latestDeployment')) throw new RailwayError('invalid API response');
   const latest = instance.latestDeployment === null ? null : deployment(instance.latestDeployment);
-  const active = instance.activeDeployments.map(node => ({ value: deployment(node), stopped: node.deploymentStopped }));
+  const active = [];
+  let skippedActive = false;
+  for (const node of instance.activeDeployments) {
+    // Each active record is independent evidence. A malformed sibling cannot
+    // invalidate a healthy active deployment or make the latest attempt live.
+    try { active.push({ value: deployment(node), stopped: node.deploymentStopped }); }
+    catch (error) {
+      if (!(error instanceof RailwayError)) throw error;
+      skippedActive = true;
+    }
+  }
   // A successful deployment in history can be stopped or replaced. Only Railway's
   // current active list can establish which commit is live during a failed rollout.
   const live = active.filter(item => item.value.status === 'SUCCESS' && !item.stopped)
     .sort((a, b) => Date.parse(b.value.createdAt) - Date.parse(a.value.createdAt))[0]?.value ?? null;
   return { serviceName: instance.serviceName, environmentName: environment.name,
+    warning: skippedActive ? 'Railway could not verify all active deployments.' : '',
     deployment: { status: latest?.status ?? 'UNKNOWN', latest, live } };
 }
 
