@@ -52,7 +52,7 @@ export function createGitHub(token, fetchImpl, { now = Date.now } = {}) {
     if (warnings.length && ci.state === 'success') ci.state = 'unknown';
     ci.runningAgent = ci.runs.some(run => run.status !== 'completed' && rules.autofixCheck.test(run.name));
     delete ci.runs;
-    return { ...ci, source, warnings, complete: warnings.length === 0 };
+    return { ...ci, source, warnings, complete: warnings.length === 0, reviewChecks: source === 'checks' ? runs : [] };
   }
 
   async function enrich(repo, pr) {
@@ -77,8 +77,11 @@ export function createGitHub(token, fetchImpl, { now = Date.now } = {}) {
     const issueComments = value(4, 'Issue comments', 'Issues', []);
     const ci = value(5, 'CI status', 'Actions and Commit statuses', { ...summarizeCI([], []), complete: false, warnings: [] });
     delete ci.runs;
+    const checkRuns = ci.reviewChecks ?? [];
+    delete ci.reviewChecks;
     warnings.push(...ci.warnings);
-    const reviewers = summarizeReviews({ reviews, comments, issueComments, headSha: pr.head.sha, owner: repo.repo.split('/')[0] });
+    const reviewers = summarizeReviews({ reviews, comments, issueComments, checkRuns, headSha: pr.head.sha, owner: repo.repo.split('/')[0] });
+    warnings.push(...reviewers.flatMap(reviewer => reviewer.incompleteReason ? [reviewer.incompleteReason] : []));
     if (results.slice(2, 5).some(result => result.status === 'rejected')) {
       for (const reviewer of reviewers) reviewer.complete = false;
     }

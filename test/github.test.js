@@ -53,6 +53,24 @@ test('accessible Checks are used without fetching Actions', async () => {
   assert.equal(item.ci.state, 'success'); assert.equal(item.ci.source, 'checks'); assert.equal(item.dataComplete, true);
   assert.equal(requests.some(request => request.url.pathname.endsWith('/actions/runs')), false);
 });
+test('Bugbot check evidence reaches reviewer summaries without leaking raw check output', async () => {
+  const checks = [{ id: 1, name: 'Cursor Bugbot', app: { slug: 'cursor' }, head_sha: head,
+    status: 'completed', conclusion: 'success', completed_at: '2026-10-15T17:00:00Z',
+    output: { summary: '**Final Result:** Bugbot completed review - no issues found!' } }];
+  const { client } = fixture({ checkStatus: 200, checks });
+  const [item] = await client.collectRepo(repo, now);
+  assert.equal(item.reviewers[0].currentHead, true); assert.equal(item.reviewers[0].openFindings, 0);
+  assert.equal(item.dataComplete, true); assert.equal(item.ci.reviewChecks, undefined);
+});
+test('an issue count without corresponding review comments cannot automatically ready a PR', async () => {
+  const checks = [{ id: 1, name: 'Cursor Bugbot', app: { slug: 'cursor' }, head_sha: head,
+    status: 'completed', conclusion: 'neutral', completed_at: '2026-10-15T17:00:00Z',
+    output: { summary: '**Final Result:** Bugbot completed review and found 2 potential issues.' } }];
+  const { client } = fixture({ checkStatus: 200, checks });
+  const snapshot = await createCache({ repos: [repo], github: client, now: () => now }).refresh();
+  assert.equal(snapshot.items[0].dataComplete, false); assert.equal(snapshot.items[0].state, 'DRAFT_IDLE');
+  assert.match(snapshot.errors[0], /Bugbot reported issues/);
+});
 test('Actions workflow failures, pending runs, and external failing statuses affect CI', async () => {
   for (const [runs, statuses, expected] of [
     [[{ id: 1, workflow_id: 10, status: 'completed', conclusion: 'failure' }], [], 'failure'],
