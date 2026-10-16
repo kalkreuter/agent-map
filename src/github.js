@@ -98,6 +98,23 @@ export function createGitHub(token, fetchImpl, { now = Date.now } = {}) {
 
   return {
     beginCycle: api.beginCycle, usage: api.usage,
+    async compareDeployment(repo, deployedSha, branch = 'main') {
+      if (!/^[\da-f]{40}$/i.test(deployedSha ?? '')) throw new Error('Deployment commit is unknown.');
+      const path = `/repos/${repo}`;
+      const { data } = await api.get(`${path}/branches/${encodeURIComponent(branch)}`);
+      const headSha = data.commit?.sha?.toLowerCase();
+      if (!/^[\da-f]{40}$/.test(headSha ?? '')) throw new Error('Branch commit is unknown.');
+      if (deployedSha.toLowerCase() === headSha) return { status: 'current', branch, headSha, behindBy: 0, aheadBy: 0 };
+      const { data: comparison } = await api.get(`${path}/compare/${deployedSha.toLowerCase()}...${headSha}`);
+      // The API compares deployed (base) with branch (head): its "ahead" means
+      // the tracked branch is ahead, so production is behind that branch.
+      const statuses = { identical: 'current', ahead: 'behind', behind: 'ahead', diverged: 'diverged' };
+      const status = Object.hasOwn(statuses, comparison.status) ? statuses[comparison.status] : null;
+      if (!status) throw new Error('Deployment comparison is unavailable.');
+      return { status, branch, headSha,
+        ...(Number.isInteger(comparison.ahead_by) && comparison.ahead_by >= 0 ? { behindBy: comparison.ahead_by } : {}),
+        ...(Number.isInteger(comparison.behind_by) && comparison.behind_by >= 0 ? { aheadBy: comparison.behind_by } : {}) };
+    },
     async collectRepo(repo, now = Date.now()) {
       const path = `/repos/${repo.repo}/pulls`;
       const [open, closed] = await Promise.all([

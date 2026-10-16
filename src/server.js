@@ -4,7 +4,9 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createGitHub } from './github.js';
 import { createCursor } from './cursor.js';
+import { createRailway } from './railway.js';
 import { createCache } from './cache.js';
+import { validateRepos } from './config.js';
 import { clientIP, createLoginLimiter } from './auth.js';
 import { startPolling } from './polling.js';
 import { rules } from '../config/rules.js';
@@ -61,12 +63,10 @@ export function createServer({ password, cache, trustProxyHops = 0, authSettings
 
 export async function start(env = process.env) {
   if (!env.GITHUB_READ_TOKEN || !env.DASHBOARD_PASSWORD) throw new Error('Set GITHUB_READ_TOKEN and DASHBOARD_PASSWORD before starting.');
-  const repos = JSON.parse(await readFile(new URL('../config/repos.json', import.meta.url), 'utf8'));
-  if (!Array.isArray(repos) || repos.length === 0 || repos.some(repo =>
-    !/^[\w.-]+\/[\w.-]+$/.test(repo.repo) || typeof repo.name !== 'string' || !/^#[\da-f]{6}$/i.test(repo.color))) {
-    throw new Error('config/repos.json must contain repo, name, and a six-digit hex color for each project.');
-  }
-  const cache = createCache({ repos, github: createGitHub(env.GITHUB_READ_TOKEN), cursor: createCursor(env.CURSOR_API_KEY) });
+  const repos = validateRepos(JSON.parse(await readFile(new URL('../config/repos.json', import.meta.url), 'utf8')));
+  const railway = createRailway(env.RAILWAY_PROJECT_TOKEN || env.RAILWAY_API_TOKEN, undefined,
+    { authMode: env.RAILWAY_PROJECT_TOKEN ? 'project' : 'account' });
+  const cache = createCache({ repos, github: createGitHub(env.GITHUB_READ_TOKEN), cursor: createCursor(env.CURSOR_API_KEY), railway });
   const server = createServer({ password: env.DASHBOARD_PASSWORD, cache, trustProxyHops: Number(env.TRUST_PROXY_HOPS ?? 0) });
   const port = Number(env.PORT ?? 3000);
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535');

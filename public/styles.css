@@ -389,6 +389,23 @@ h2 {
 .state-badge[data-state="MERGED_TODAY"] {
   color: #52d4bc;
 }
+.state-badge[data-state="DEPLOY_LIVE"] {
+  color: #52d4bc;
+}
+.state-badge[data-state="DEPLOYING"] {
+  color: #8b9dff;
+}
+.state-badge[data-state="DEPLOY_FAILED"] {
+  color: #ff8790;
+  border-color: #824953;
+}
+.state-badge[data-state="DEPLOY_BEHIND"],
+.state-badge[data-state="DEPLOY_UNVERIFIED"] {
+  color: #f4bb65;
+}
+.state-badge[data-state="DEPLOY_UNKNOWN"] {
+  color: #aab6ca;
+}
 .facts {
   margin: 24px 0;
 }
@@ -407,6 +424,15 @@ dd {
   font-size: 13px;
   overflow-wrap: anywhere;
   line-height: 1.6;
+}
+.fact-detail {
+  display: block;
+  margin-top: 5px;
+  font-size: 11px;
+  color: #a2b1c8;
+}
+.deployment-behind dd {
+  color: #f4bb65;
 }
 h3 {
   font-size: 13px;
@@ -458,7 +484,7 @@ h3 {
   font-size: 12px;
   font-weight: 700;
 }
-.card-links a + a {
+.card-links a:not([hidden]) ~ a:not([hidden]) {
   background: #26354e;
   color: #e0e8fb;
 }

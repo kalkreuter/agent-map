@@ -47,6 +47,12 @@ export const states = {
   FIXES_NEEDED: { label: 'Fixes needed', color: '#f4bb65', symbol: '!' },
   DRAFT_IDLE: { label: 'Draft / idle', color: '#8a95a9', symbol: '·' },
   MERGED_TODAY: { label: 'Merged today', color: '#52d4bc', symbol: '✓', fadeMs: 6 * 60 * 60_000 },
+  DEPLOY_LIVE: { label: 'Live', color: '#52d4bc', symbol: '✓' },
+  DEPLOY_UNVERIFIED: { label: 'Live / unverified', color: '#f4bb65', symbol: '?' },
+  DEPLOYING: { label: 'Deploying', color: '#8b9dff', symbol: '↑' },
+  DEPLOY_FAILED: { label: 'Deploy failed', color: '#ff747d', symbol: '!' },
+  DEPLOY_BEHIND: { label: 'Live / behind', color: '#f4bb65', symbol: '!' },
+  DEPLOY_UNKNOWN: { label: 'Deploy unknown', color: '#8a95a9', symbol: '·' },
 };
 
 export function dayKey(date) {
@@ -56,6 +62,15 @@ export function dayKey(date) {
 }
 
 export function classify(pr, now = Date.now()) {
+  if (pr.kind === 'deployment') {
+    if (pr.stale) return 'DEPLOY_UNKNOWN';
+    if (['WAITING', 'QUEUED', 'INITIALIZING', 'BUILDING', 'DEPLOYING'].includes(pr.deployment?.status)) return 'DEPLOYING';
+    if (['FAILED', 'CRASHED'].includes(pr.deployment?.status)) return 'DEPLOY_FAILED';
+    if (pr.deployment?.live?.status !== 'SUCCESS') return 'DEPLOY_UNKNOWN';
+    if (pr.dataComplete === false) return 'DEPLOY_UNVERIFIED';
+    if (pr.sync?.status === 'behind') return 'DEPLOY_BEHIND';
+    return pr.sync?.status === 'current' ? 'DEPLOY_LIVE' : 'DEPLOY_UNVERIFIED';
+  }
   if (pr.kind === 'agent') return pr.agent?.running ? 'WORKING' : 'DRAFT_IDLE';
   if (pr.mergedAt && dayKey(pr.mergedAt) === dayKey(now)) return 'MERGED_TODAY';
   if (pr.mergedAt) return 'DRAFT_IDLE';
