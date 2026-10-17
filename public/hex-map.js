@@ -33,19 +33,21 @@ function clipped(value, length) {
 export class HexMap {
   constructor(svg, viewport, onSelect) {
     this.svg = svg; this.viewport = viewport; this.onSelect = onSelect;
+    this.controller = new AbortController();
+    const listen = (type, callback, options = {}) => svg.addEventListener(type, callback, { ...options, signal: this.controller.signal });
     this.scale = 1; this.x = 0; this.y = 0; this.pointers = new Map();
     this.bounds = { x: -200, y: -150, width: 400, height: 300 };
-    svg.addEventListener('wheel', event => {
+    listen('wheel', event => {
       event.preventDefault(); this.zoom(Math.exp(-event.deltaY * .002), this.local(event));
     }, { passive: false });
-    svg.addEventListener('pointerdown', event => {
+    listen('pointerdown', event => {
       if (event.button !== 0) return;
       this.pointers.set(event.pointerId, this.local(event));
       this.start = this.local(event); this.dragged = false;
       this.tile = event.target.closest('.tile');
       svg.setPointerCapture(event.pointerId);
     });
-    svg.addEventListener('pointermove', event => {
+    listen('pointermove', event => {
       if (!this.pointers.has(event.pointerId)) return;
       const before = [...this.pointers.values()];
       const point = this.local(event);
@@ -68,12 +70,16 @@ export class HexMap {
       if (event.type === 'pointerup' && !wasPinching && !this.dragged && this.tile) this.onSelect(this.tile.dataset.id);
       if (wasPinching) this.dragged = true;
     };
-    svg.addEventListener('pointerup', end); svg.addEventListener('pointercancel', end);
-    svg.addEventListener('keydown', event => {
+    listen('pointerup', end); listen('pointercancel', end);
+    listen('keydown', event => {
       const tile = event.target.closest('.tile');
       if (tile && ['Enter', ' '].includes(event.key)) { event.preventDefault(); this.onSelect(tile.dataset.id); }
     });
     this.observer = new ResizeObserver(() => this.fit()); this.observer.observe(svg);
+  }
+  dispose() {
+    this.controller.abort(); this.observer.disconnect(); this.pointers.clear();
+    this.viewport.replaceChildren();
   }
   local(event) { const rect = this.svg.getBoundingClientRect(); return { x: event.clientX - rect.left, y: event.clientY - rect.top }; }
   transform() { this.viewport.setAttribute('transform', `translate(${this.x} ${this.y}) scale(${this.scale})`); }

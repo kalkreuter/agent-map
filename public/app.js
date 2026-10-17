@@ -1,6 +1,9 @@
 import { HexMap } from './hex-map.js';
+import { normalizeSnapshot, needsAndre, cycleWaiting } from './scene-state.js';
+import { demoState } from './demo-state.js';
 const $ = id => document.getElementById(id);
-let snapshot, selectedId, pollTimer, configurationKey;
+let snapshot, scene, selectedId, pollTimer, configurationKey;
+const viewParams = typeof location === 'undefined' ? null : new URLSearchParams(location.search);
 const map = new HexMap($('map'), $('viewport'), openCard);
 const repoFilter = $('repo-filter'), stateFilter = $('state-filter');
 
@@ -85,6 +88,9 @@ function openCard(id, focus = true) {
       + (ci.source === 'actions' ? ' · Actions + commit statuses' : '');
   }
   const warnings = [item.warning];
+  if (!isAgent && !isDeployment && item.state === 'NEEDS_ANDRE' && scene?.workItems.find(work => work.id === id)?.status === 'idle') {
+    warnings.push('CI and review signals suggest readiness. No explicit approval request was observed, so this is outside the Needs Andre queue.');
+  }
   if (isDeployment && item.stale) warnings.push('Railway data is stale. Verify current deployment status in Railway.');
   else if (isDeployment && item.dataComplete === false && !item.warning) warnings.push('Deployment data is incomplete. Verify live status and the commit comparison in Railway.');
   else if (!isAgent && !isDeployment && repo.stale) warnings.push(`GitHub is unavailable. Last successful collection: ${age(repo.updatedAt)}. Verify the PR before acting.`);
@@ -114,13 +120,13 @@ function render(fit = false) {
   const items = snapshot.items.filter(item => (!repoFilter.value || item.repo === repoFilter.value)
     && (!stateFilter.value || item.state === stateFilter.value));
   map.setItems(items, snapshot.repos, snapshot.states, fit);
-  $('needs-count').textContent = snapshot.items.filter(item => item.kind !== 'agent' && item.kind !== 'deployment' && item.state === 'NEEDS_ANDRE').length;
+  $('needs-count').textContent = needsAndre(scene).length;
   $('visible-count').textContent = `${items.length} visible / ${snapshot.items.length} total`;
   $('empty').hidden = items.length > 0;
   $('empty').textContent = snapshot.loading ? 'Loading your map…' : snapshot.errors.length && !snapshot.items.length
     ? 'Project data is unavailable. Check the connection notice above.' : 'No pull requests, agents, or deployments match this view.';
   const interval = snapshot.pollMs < 120_000 ? `${Math.ceil(snapshot.pollMs / 1000)}s` : `${Math.ceil(snapshot.pollMs / 60_000)}m`;
-  $('sync').textContent = snapshot.loading ? 'Fetching first snapshot…' : `Polled ${age(snapshot.updatedAt)} · every ${interval}`;
+  $('sync').textContent = scene.mode === 'DEMO' ? 'DEMO · synthetic activity' : scene.mode === 'RECORDED' ? 'RECORDED · original timestamps' : snapshot.loading ? 'Fetching first snapshot…' : `LIVE · polled ${age(snapshot.updatedAt)} · every ${interval}`;
   $('notice').hidden = !snapshot.errors.length; $('notice').textContent = snapshot.errors.join(' ');
   if (selectedId && items.some(item => item.id === selectedId)) openCard(selectedId, false); else closeCard();
 }
@@ -148,13 +154,25 @@ function configure(data) {
 }
 async function poll() {
   try {
-    const response = await fetch('/api/map', { cache: 'no-store', signal: AbortSignal.timeout(15_000) });
+    if (viewParams?.get('mode') === 'recorded') {
+      scene = normalizeSnapshot({ repos: [], items: [], states: {}, errors: [], loading: false, pollMs: 60_000 }, { mode: 'RECORDED' });
+      snapshot = scene.legacy; configure(snapshot); render(true);
+      $('empty').textContent = 'No recording loaded. Open the colony to import a captured snapshot; its in-memory 2D view preserves recorded data.';
+      return;
+    }
+    const isDemo = viewParams?.get('mode') === 'demo';
+    const response = isDemo ? null : await fetch(`/api/map${viewParams?.get('mode') === 'live' ? '?mode=live' : ''}`, { cache: 'no-store', signal: AbortSignal.timeout(15_000) });
+    if (isDemo) {
+      scene = demoState(Number(viewParams?.get('step') ?? 0), { crowded: viewParams?.get('crowded') === '1', stale: viewParams?.get('stale') === '1' }); snapshot = scene.legacy; configure(snapshot); render(true); return;
+    }
     if (response.status === 401) { $('notice').textContent = 'Password required. Reload to sign in.'; $('notice').hidden = false; return; }
     if (!response.ok) throw new Error('Unable to load map');
     const data = await response.json(); const first = !snapshot; const wasLoading = snapshot?.loading;
     configure(data);
-    snapshot = data; render(first || wasLoading);
+    scene = data.mode === 'DEMO' ? demoState(Number(viewParams?.get('step') ?? 0)) : normalizeSnapshot(data);
+    snapshot = scene.legacy; render(first || wasLoading);
   } catch {
+    if (scene && scene.mode === 'LIVE') { scene = normalizeSnapshot(snapshot, { disconnected: true }); snapshot = scene.legacy; render(); }
     $('notice').hidden = false; $('notice').textContent = 'Cannot reach the dashboard. Showing the last snapshot; it may be out of date.';
     $('sync').textContent = 'Connection interrupted';
     if (!snapshot) $('empty').textContent = 'Waiting for the dashboard connection…';
@@ -168,4 +186,11 @@ $('close-card').addEventListener('click', () => closeCard(true));
 document.addEventListener('keydown', event => { if (event.key === 'Escape') closeCard(true); });
 $('zoom-in').addEventListener('click', () => map.zoom(1.25)); $('zoom-out').addEventListener('click', () => map.zoom(.8));
 $('reset-view').addEventListener('click', () => map.fit());
+const needsButton = $('needs-next');
+needsButton?.addEventListener('click', () => {
+  const next = cycleWaiting(scene, selectedId);
+  if (next) openCard(next.id); else { $('notice').hidden = false; $('notice').textContent = 'Nothing explicitly waiting for Andre. Green CI alone does not request approval.'; }
+});
+if (viewParams && $('colony-link')) $('colony-link').href = `/${viewParams.size ? `?${viewParams}` : ''}`;
+if (typeof window !== 'undefined') window.addEventListener('pagehide', () => { clearTimeout(pollTimer); map.dispose(); }, { once: true });
 void poll();

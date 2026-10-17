@@ -3,11 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "A read-only hex map of pull requests that need Andre",
-  "engines": { "node": ">=20" },
+  "description": "A read-only miniature colony of projects, agent runs, and pull requests",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test test/*.test.js",
-    "check": "node --check src/server.js && node --check public/app.js && node --check public/hex-map.js"
+    "check": "node scripts/check.js",
+    "demo": "node src/demo-server.js",
+    "test:browser": "playwright test",
+    "inspect": "node scripts/inspect-colony.js"
+  },
+  "dependencies": {
+    "three": "0.180.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.56.1"
   }
 }

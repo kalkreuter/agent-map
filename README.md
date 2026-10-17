@@ -1,8 +1,52 @@
 # Agent Map
 
-A password-protected, read-only dashboard of PRs, agents, and deployments. Projects form colored clusters on a 2D hex map; each open PR, unlinked Cursor cloud agent, and configured Railway service is a tile. Today's merges fade in green until the next day in `America/Los_Angeles`.
+A password-protected, read-only miniature colony of projects, agent runs, PRs, and deployment observations. The default orthographic 3D view uses connected hex districts, original modular buildings, expressive robots, and selective relationships. The existing SVG hex map remains available at `/2d`; each open PR, unlinked Cursor cloud agent, and configured Railway service keeps its original tile. Today's merges fade in green until the next day in `America/Los_Angeles`.
 
-Phase 1 of [issue #1](https://github.com/kalkreuter/agent-map/issues/1), the [issue #3 follow-ups](https://github.com/kalkreuter/agent-map/issues/3), and Phase 2 Railway deployment visibility. Built with Node ≥20 and vanilla JavaScript/SVG, with no npm dependencies, build step, database, or disk cache. The running app uses GET requests to GitHub REST and optional Cursor, plus a fixed read-only GraphQL query sent by POST to Railway when configured. It cannot approve, comment, launch agents, merge, or deploy anything.
+Phase 1 of [issue #1](https://github.com/kalkreuter/agent-map/issues/1), the [issue #3 follow-ups](https://github.com/kalkreuter/agent-map/issues/3), and Phase 2 Railway deployment visibility. Built with Node ≥20, vanilla JavaScript/SVG, and locally served pinned Three.js modules. There is no framework rewrite, bundling/build step, database, or server disk cache. Playwright is a development-only browser-test dependency. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The running app uses GET requests to GitHub REST and optional Cursor, plus a fixed read-only GraphQL query sent by POST to Railway when configured. It cannot approve, comment, launch agents, merge, or deploy anything.
+
+## Colony rehearsal and data modes
+
+```sh
+npm ci
+npm run demo
+```
+
+Open [127.0.0.1:3000](http://127.0.0.1:3000/?mode=demo); Basic Auth username `andre`, password `demo`. The separate demo command binds only to loopback, never starts collectors, and never reads upstream credentials. It uses configured project names with entirely synthetic work/runs. Normal `npm start` retains the required scoped token and password; it never starts in demo implicitly.
+
+- **DEMO:** six fixed, manually seekable frames: arrival → build → independent review → changes requested → revision → explicit wait for Andre. Play/pause, restart, and timeline buttons. No demo work is ever merged or deployed. Query examples: `/?mode=demo&step=5`, `/?mode=demo&step=5&crowded=1`, `/?mode=demo&step=5&stale=1`.
+- **LIVE:** existing `/api/map` polling and collectors. `/?mode=live` on the demo server is deliberately empty and disconnected, with a clear explanation. Synthetic runs, events, and relationships never populate LIVE. A quiet source stays quiet.
+- **RECORDED:** import an observed `/api/map` JSON snapshot with its original `updatedAt`. Imports stay in browser memory, make no upstream calls, and retain original timestamps. No historical dataset is bundled. Demo recordings are rejected. Recorded fallback uses an in-memory SVG renderer so the imported snapshot remains recorded.
+
+Switch to the original 2D map using **2D view**. WebGL initialization/context failure automatically offers that fallback. The recorded mode keeps the imported snapshot in the current page instead of substituting live data. A direct `/2d?mode=recorded` visit has an explicit empty state and performs no live fetch.
+
+Drag to pan; right-drag for bounded orbit; wheel/pinch to zoom. Touch uses one finger to pan and two to orbit/zoom. Reset restores the colony framing. Select a district, work site, or robot for evidence and related-item navigation. The **Explore** list provides keyboard access; Escape closes details. **Needs Andre** and its previous/next buttons cycle only explicit, fresh requests. Decisions link to their real source; there are no write controls. Optional follow mode has a Stop following control, and direct camera interaction stops it. Reduced motion removes robot motion and camera flights.
+
+## Scene architecture and evidence
+
+`public/scene-state.js` adapts the existing snapshot into Project, WorkItem, AgentInstance, Relationship, ActivityEvent, and SourceHealth entities. Both renderers consume that same state; the unchanged legacy payload drives SVG classification and detailed review/deployment evidence. `public/colony-map.js` owns renderer initialization, updates, selection/focus, camera, and disposal. `colony-assets.js` and `robot-model.js` build original reusable procedural assets. Collection stays in `src/`.
+
+- Configured Manage and Vivi form stable districts. PRs/deployment observations are work sites; commits never create buildings. HQ buildings are visual metaphors, not observed orchestrators or proof of service health.
+- Cursor robots require actual distinct run IDs. Multiple linked runs on one PR now remain separate in `agentInstances`; the original `agent` field and 2D tile count remain compatible. GitHub Bugbot/Codex/Claude review summaries remain work-site evidence because the collector does not expose individual review-run identities. No permanent operational agents were created.
+- LIVE currently has verified Cursor→PR assignment edges. Dependencies, review-worker runs, arrivals, and handoffs are demonstrated only in labeled DEMO until a source exposes those facts. Timestamp proximity never creates causality.
+- Run completion, review findings/approval, PR merge, successful deployment, and feature enablement are separate facts. Feature enablement is not collected. Existing deployment observations remain read-only and retain live/latest distinction.
+- Collection health distinguishes unconfigured sources, failed reads, unknown states, and last successful observations. Interrupted browser connections mark retained observations stale. Inferred readiness remains visible but does not manufacture an explicit request for Andre. Explicit labels come from `rules.awaitingLabels` via `explicitInputLabels`.
+- The existing 60-second browser cache poll remains. Each reconnect replaces from a full snapshot; bounded events deduplicate by ID. This increment does not introduce SSE or change the adaptive upstream scheduler.
+
+The visible scene is bounded to four work sites per district and a bounded robot crew; overflow remains accessible in the item list. Geometry/materials are reused, pixel ratio/effects are capped, idle/hidden work pauses, and all GPU resources/listeners are disposed. Performance targets require device measurements; a responsive 390px screenshot is not a mobile FPS measurement.
+
+## Browser validation
+
+```sh
+npm run check
+npm test
+npm run test:browser
+# Start npm run demo in another terminal, then:
+npm run inspect
+```
+
+Browser tests use a real Chromium WebGL context, verify substantive geometry and screenshot pixel variation, pick an actual scene work site, and exercise cards, replay, explicit approval navigation, quiet LIVE, stale/crowded scenes, reduced motion, disposal, and fallback. They fail if WebGL cannot initialize. System Chromium at `/usr/bin/chromium` is used when available; otherwise run `npx playwright install chromium` to install Playwright’s bundled browser. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE` to choose another installation. CI installs Chromium and runs the same WebGL suite, with reports uploaded on pass or failure. Basic Auth test credentials default to `andre` / `demo`; `AGENT_MAP_TEST_URL` and `AGENT_MAP_TEST_PASSWORD` target an already running server. Otherwise Playwright starts the loopback demo automatically.
+
+`npm run inspect` writes desktop/mobile/state screenshots, a JSON environment/frame-time report, and an interaction recording when system ffmpeg is available to ignored `artifacts/`. The report explicitly labels software rendering and does not claim real-device performance. See [REVIEW.md](REVIEW.md) for this change set’s checked results and limitations.
 
 ## Run locally
 
@@ -35,7 +79,7 @@ Edit `config/repos.json`; adding another object is enough:
 { "repo": "kalkreuter/storagestack-manage", "name": "Manage", "color": "#8b9dff" }
 ```
 
-Manage and Vivi are configured by default. Restart after config changes. Each repo has a cluster label, separate PR/agent/deployment counts, and a color stripe on every tile. Tile color shows its state. The top Needs Andre count covers PRs across all projects; the visible/total count includes every tile kind and reflects filters. Drag to pan, scroll/pinch or use +/− to zoom, and use ⌖ to fit. Tiles also support Tab and Enter/Space. Select a PR tile to open CI, head commit/age, and reviewer activity with PR and optional agent links. Agent cards show the agent name, status, creation age, and conversation link when known.
+Manage and Vivi are configured by default. Restart after config changes. Each repo has a cluster label, separate PR/agent/deployment counts, and a color stripe on every tile. Tile color shows its state. The top Needs Andre count now covers explicit approval requests (the configured awaiting labels) across all projects; inferred green-CI readiness remains a separate legacy tile state; the visible/total count includes every tile kind and reflects filters. Drag to pan, scroll/pinch or use +/− to zoom, and use ⌖ to fit. Tiles also support Tab and Enter/Space. Select a PR tile to open CI, head commit/age, and reviewer activity with PR and optional agent links. Agent cards show the agent name, status, creation age, and conversation link when known.
 
 ### Railway deployment tiles
 
@@ -154,4 +198,4 @@ No volume or database is needed. Each replica has its own poller/cache; use a si
 
 ## Later
 
-The next Phase 2 increment can replace `public/hex-map.js` behind its `setItems`/`select`/`fit`/`zoom` interface with a 3D renderer and robots. Write/approval controls remain a separate feature requiring explicit authorization and credentials with write permissions.
+Future work can add new observed run sources and orchestration relationships once their identities are available. Planet mode, approval/write controls, feature activation, themes, Notion terrain, and new health/weather integrations remain deferred. Nothing in this app grants approval, merges, deploys, or replaces the existing pipeline.
