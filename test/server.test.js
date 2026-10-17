@@ -12,7 +12,7 @@ test('server gates UI and API, blocks mutations and keeps secrets inaccessible',
   const server = createServer({ password: 'test-password', cache: { view: () => ({ items: [], loading: false }) } });
   server.listen(0, '127.0.0.1'); await once(server, 'listening'); t.after(() => new Promise(resolve => server.close(resolve)));
   const base = `http://127.0.0.1:${server.address().port}`;
-  for (const path of ['/', '/api/map', '/app.js', '/styles.css']) {
+  for (const path of ['/', '/2d', '/api/map', '/app.js', '/styles.css', '/colony.js', '/scene-state.js', '/vendor/three.module.js']) {
     const response = await fetch(base + path); assert.equal(response.status, 401, path);
     assert.match(response.headers.get('www-authenticate'), /Basic/);
   }
@@ -21,8 +21,14 @@ test('server gates UI and API, blocks mutations and keeps secrets inaccessible',
   assert.equal(page.headers.get('cache-control'), 'no-store'); assert.match(page.headers.get('content-security-policy'), /frame-ancestors 'none'/);
   const api = await fetch(base + '/api/map', options); assert.deepEqual(await api.json(), { items: [], loading: false });
   assert.equal((await fetch(base + '/healthz')).status, 200);
+  for (const path of ['/2d', '/scene-state.js', '/demo-state.js', '/colony.css', '/vendor/three.module.js', '/vendor/three.core.js', '/vendor/OrbitControls.js']) {
+    const asset = await fetch(base + path, options); assert.equal(asset.status, 200, path);
+    assert.equal(asset.headers.get('cache-control'), 'no-store');
+    const body = await asset.text();
+    if (path.endsWith('OrbitControls.js')) assert.match(body, /from '\/vendor\/three.module.js'/);
+  }
   for (const method of ['POST', 'PUT', 'PATCH', 'DELETE']) assert.equal((await fetch(base + '/api/map', { ...options, method })).status, 405);
-  for (const path of ['/.env', '/config/repos.json', '/src/server.js', '/../../etc/passwd']) assert.equal((await fetch(base + path, options)).status, 404);
+  for (const path of ['/.env', '/config/repos.json', '/src/server.js', '/../../etc/passwd', '/node_modules/three/package.json', '/vendor/../../../etc/passwd']) assert.equal((await fetch(base + path, options)).status, 404);
   const headResponse = await fetch(base, { ...options, method: 'HEAD' }); assert.equal(await headResponse.text(), '');
 });
 test('startup fails closed without required env vars', async () => {

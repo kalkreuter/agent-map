@@ -11,13 +11,14 @@
 <body>
   <header class="topbar">
     <a class="brand" href="/" aria-label="Agent Map home"><span class="brand-icon">⬡</span><span>AGENT MAP<small>MISSION CONTROL / PHASE 02</small></span></a>
-    <div class="attention"><strong id="needs-count">—</strong><span>NEEDS ANDRE<small>Your next decisions, in one place.</small></span></div>
+    <div class="attention"><strong id="needs-count">—</strong><span>NEEDS ANDRE<small>Explicit approval requests.</small></span><button id="needs-next" aria-label="Next item waiting for Andre">Next →</button></div>
     <div class="sync"><span class="live-dot"></span><span id="sync">Connecting…</span></div>
   </header>
   <main>
     <section class="toolbar" aria-label="Map filters">
       <div><h1>Your work, from above.</h1><p>Pull requests, agents, and deployments. Every project in view.</p></div>
       <div class="filters">
+        <a id="colony-link" href="/">3D colony ↗</a>
         <label>PROJECT<select id="repo-filter"><option value="">All projects</option></select></label>
         <label>STATE<select id="state-filter"><option value="">All states</option></select></label>
       </div>

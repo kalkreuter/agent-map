@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#172a29" />
+    <title>Agent Map — Colony</title>
+    <link rel="stylesheet" href="/colony.css" />
+    <script type="module" src="/colony.js"></script>
+  </head>
+  <body>
+    <main id="colony-app">
+      <div
+        id="colony-world"
+        role="group"
+        aria-label="Interactive agent colony. Drag to pan, right-drag to orbit, scroll to zoom. On touch, use two fingers to orbit and zoom. Use Explore colony for keyboard navigation."
+      ></div>
+      <header class="topbar glass">
+        <a class="brand" href="/" aria-label="Agent Map home"
+          ><svg width="30" height="32" viewBox="0 0 30 32" aria-hidden="true">
+            <path
+              d="M15 2 28 9.5v13L15 30 2 22.5v-13Z"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+            />
+            <path d="m8 12 7-4 7 4v8l-7 4-7-4Z" fill="currentColor" />
+            <path
+              d="m11 14 4 2 4-2"
+              fill="none"
+              stroke="#e8eee3"
+              stroke-width="1.4"
+            /></svg
+          ><span>AGENT MAP<small>THE COLONY</small></span></a
+        >
+        <div class="mode-control">
+          <span id="mode-dot" class="mode-dot"></span
+          ><label class="sr-only" for="data-mode">Data mode</label
+          ><select id="data-mode">
+            <option value="DEMO">DEMO</option>
+            <option value="LIVE">LIVE</option>
+            <option value="RECORDED">RECORDED</option></select
+          ><span id="mode-caption">Synthetic replay</span>
+        </div>
+        <nav class="top-actions" aria-label="View controls">
+          <button
+            id="explore-toggle"
+            class="text-button"
+            aria-expanded="false"
+            aria-controls="object-list"
+            aria-label="Explore colony"
+          >
+            <span aria-hidden="true">☷</span>
+            <span class="explore-label">Explore</span></button
+          ><a id="flat-link" class="view-link" href="/2d"
+            >2D view <span aria-hidden="true">↗</span></a
+          >
+        </nav>
+      </header>
+
+      <div class="colony-heading">
+        <p class="eyebrow">YOUR WORK, FROM ABOVE</p>
+        <h1>Agent colony<span>.</span></h1>
+        <p id="colony-summary">Preparing the landing zone…</p>
+      </div>
+
+      <section class="attention-control glass" aria-label="Your decisions">
+        <button id="needs-andre" aria-label="Needs Andre">
+          <span class="attention-symbol" aria-hidden="true">?</span
+          ><span
+            ><strong>NEEDS ANDRE</strong
+            ><small id="attention-description"
+              >Checking for decisions</small
+            ></span
+          ><b id="needs-count">0</b>
+        </button>
+        <div class="attention-nav">
+          <button id="previous-waiting" aria-label="Previous waiting">‹</button
+          ><button id="next-waiting" aria-label="Next waiting">›</button>
+        </div>
+      </section>
+
+      <p id="notice" class="notice glass" role="status" hidden></p>
+      <div id="loading" class="loading glass" role="status">
+        <span class="loading-icon" aria-hidden="true">⬡</span
+        ><strong>Building your view</strong
+        ><span>Connecting projects and work sites.</span>
+      </div>
+      <section
+        id="recorded-empty"
+        class="recorded-empty glass"
+        hidden
+        aria-label="Load recorded activity"
+      >
+        <span class="recording-icon" aria-hidden="true">◷</span>
+        <h2>A moment worth revisiting.</h2>
+        <p>
+          Import a captured Agent Map JSON snapshot. Original observation times
+          are preserved.
+        </p>
+        <label class="primary-button" for="recording-file"
+          >Import recording <span aria-hidden="true">↗</span></label
+        ><input
+          id="recording-file"
+          type="file"
+          accept="application/json,.json"
+          class="sr-only"
+        /><small>No recording is bundled with this colony.</small>
+      </section>
+
+      <section
+        id="object-list"
+        class="object-list glass"
+        aria-labelledby="list-title"
+        hidden
+      >
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">KEYBOARD EXPLORER</p>
+            <h2 id="list-title">In this colony</h2>
+          </div>
+          <button
+            id="close-list"
+            class="icon-button"
+            aria-label="Close explorer"
+          >
+            ×
+          </button>
+        </div>
+        <label class="sr-only" for="entity-search"
+          >Find a project, work site, or agent</label
+        ><input
+          id="entity-search"
+          type="search"
+          placeholder="Find a project, work site, or agent…"
+          autocomplete="off"
+        />
+        <div id="entity-list"></div>
+      </section>
+
+      <aside
+        id="details-card"
+        class="details-card glass"
+        data-testid="details-card"
+        aria-labelledby="card-title"
+        tabindex="-1"
+        hidden
+      >
+        <div class="card-top">
+          <p id="card-eyebrow" class="eyebrow"></p>
+          <button
+            id="close-details"
+            class="icon-button"
+            aria-label="Close details"
+          >
+            ×
+          </button>
+        </div>
+        <div class="card-title-row">
+          <span id="card-icon" class="entity-icon" aria-hidden="true"></span>
+          <h2 id="card-title"></h2>
+        </div>
+        <div id="card-status" class="status-badge"></div>
+        <p id="card-activity" class="card-activity"></p>
+        <div class="card-source">
+          <span id="card-observed"></span><span id="card-provenance"></span>
+        </div>
+        <p id="card-warning" class="card-warning" hidden></p>
+        <dl id="card-facts" class="card-facts"></dl>
+        <section id="card-related-section" class="card-related">
+          <h3>CONNECTED WORK</h3>
+          <div id="card-related"></div>
+        </section>
+        <div id="card-reviews" class="card-reviews" hidden></div>
+        <div class="card-actions">
+          <a id="source-link" target="_blank" rel="noopener noreferrer" hidden
+            >Open at source ↗</a
+          ><button id="follow-agent" hidden>Follow robot</button>
+        </div>
+        <p class="read-only">
+          READ ONLY · Decisions stay in your existing workflow.
+        </p>
+      </aside>
+
+      <section
+        id="demo-panel"
+        class="demo-panel glass"
+        aria-label="Synthetic demo replay"
+        hidden
+      >
+        <div class="demo-top">
+          <span class="eyebrow"
+            >DEMO REPLAY <span class="synthetic-tag">SYNTHETIC</span></span
+          ><span id="demo-step-count">01 / 06</span>
+        </div>
+        <div class="demo-story">
+          <button
+            id="demo-play"
+            class="play-button"
+            aria-label="Play demo replay"
+          >
+            ▶
+          </button>
+          <div>
+            <h2 id="demo-title"></h2>
+            <p id="demo-detail"></p>
+          </div>
+        </div>
+        <div class="demo-bottom">
+          <div
+            id="demo-timeline"
+            class="demo-timeline"
+            aria-label="Replay steps"
+          ></div>
+          <button
+            id="demo-restart"
+            class="mini-button"
+            aria-label="Restart demo replay"
+          >
+            ↶</button
+          ><button
+            id="demo-next"
+            class="mini-button"
+            aria-label="Next demo step"
+          >
+            →
+          </button>
+        </div>
+      </section>
+
+      <div class="world-footer">
+        <div class="source-status glass">
+          <span id="source-indicator" class="source-indicator"></span
+          ><span id="source-status">Preparing colony</span
+          ><span class="footer-divider"></span
+          ><span id="source-count">READ ONLY</span>
+        </div>
+        <div class="world-legend glass" aria-label="Activity legend">
+          <span><i class="working-dot"></i>Working</span
+          ><span><i class="review-dot"></i>Reviewing</span
+          ><span><i class="waiting-dot"></i>Waiting</span
+          ><span><i class="idle-dot"></i>Idle</span>
+        </div>
+        <div class="camera-controls glass" aria-label="Camera controls">
+          <button id="zoom-out" aria-label="Zoom out">−</button
+          ><button id="reset-view" aria-label="Reset view">
+            <svg width="17" height="17" viewBox="0 0 20 20" aria-hidden="true">
+              <path
+                d="M6 2H2v4m12-4h4v4M2 14v4h4m12-4v4h-4"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.5"
+              />
+              <path
+                d="m10 6 4 2.5v3L10 14l-4-2.5v-3Z"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.4"
+              />
+            </svg></button
+          ><button id="zoom-in" aria-label="Zoom in">+</button
+          ><span class="control-separator"></span
+          ><button
+            id="help-toggle"
+            aria-label="Camera help"
+            aria-expanded="false"
+          >
+            ?
+          </button>
+        </div>
+      </div>
+      <div id="camera-help" class="camera-help glass" hidden>
+        <strong>Explore your colony</strong
+        ><span>Drag to pan · right-drag to orbit</span
+        ><span>Scroll to zoom · two fingers to orbit / zoom</span
+        ><span>Select a robot, building, or district.</span
+        ><small>Reduced motion follows your device setting.</small>
+      </div>
+      <div id="fallback" class="fallback glass" role="alert" hidden>
+        <span aria-hidden="true">⬡</span>
+        <h2>Your map has a 2D view.</h2>
+        <p id="fallback-message">
+          3D rendering is unavailable in this browser.
+        </p>
+        <a id="fallback-link" class="primary-button" href="/2d"
+          >Continue in 2D ↗</a
+        >
+      </div>
+      <p id="announcer" class="sr-only" aria-live="polite"></p>
+    </main>
+  </body>
+</html>

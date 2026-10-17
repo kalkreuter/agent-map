@@ -78,6 +78,20 @@ test('cached merged tiles disappear at the next day boundary without a network r
   await cache.refresh(); assert.equal(cache.view().items.length, 1);
   clock += 86400_000; assert.equal(cache.view().items.length, 0);
 });
+
+test('source health preserves last successful observation and distinguishes unconfigured sources', async () => {
+  let clock = now, fail = false;
+  const cache = createCache({ repos: [repo], now: () => clock, github: { collectRepo: async () => { if (fail) throw new Error('private'); return [pr()]; } } });
+  await cache.refresh();
+  const first = cache.view().sourceHealth.find(source => source.id === 'github');
+  assert.equal(first.status, 'current');
+  fail = true; clock += 60_000; await cache.refresh();
+  const later = cache.view();
+  assert.equal(later.sourceHealth.find(source => source.id === 'github').observedAt, first.observedAt);
+  assert.equal(later.sourceHealth.find(source => source.id === 'github').status, 'stale');
+  assert.equal(later.sourceHealth.find(source => source.id === 'cursor').status, 'not_configured');
+  assert.equal(later.items[0].collectedAt, first.observedAt);
+});
 test('Cursor is optional; when configured, paginate and attach running agents by exact PR URL', async () => {
   assert.equal(createCursor(), null);
   const requests = [];

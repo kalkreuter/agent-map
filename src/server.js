@@ -12,10 +12,21 @@ import { startPolling } from './polling.js';
 import { rules } from '../config/rules.js';
 
 const assets = new Map([
-  ['/', ['index.html', 'text/html; charset=utf-8']],
+  ['/', ['colony.html', 'text/html; charset=utf-8']],
+  ['/2d', ['index.html', 'text/html; charset=utf-8']],
   ['/app.js', ['app.js', 'text/javascript; charset=utf-8']],
   ['/hex-map.js', ['hex-map.js', 'text/javascript; charset=utf-8']],
   ['/styles.css', ['styles.css', 'text/css; charset=utf-8']],
+  ...['colony.js', 'colony-map.js', 'colony-assets.js', 'robot-model.js', 'scene-state.js', 'demo-state.js']
+    .map(name => [`/${name}`, [name, 'text/javascript; charset=utf-8']]),
+  ['/colony.css', ['colony.css', 'text/css; charset=utf-8']],
+]);
+// Serve only these pinned local dependencies. No CDN, package-directory listing,
+// arbitrary file access, import map, or relaxed script policy is needed.
+const vendorAssets = new Map([
+  ['/vendor/three.module.js', 'three/build/three.module.js'],
+  ['/vendor/three.core.js', 'three/build/three.core.js'],
+  ['/vendor/OrbitControls.js', 'three/examples/jsm/controls/OrbitControls.js'],
 ]);
 const hash = value => createHash('sha256').update(value).digest();
 
@@ -52,7 +63,13 @@ export function createServer({ password, cache, trustProxyHops = 0, authSettings
     limiter.reset(ip);
     if (!['GET', 'HEAD'].includes(req.method)) return send(405, 'Read-only', { Allow: 'GET, HEAD' });
     try {
-      if (path === '/api/map') return send(200, JSON.stringify(cache.view()), { 'Content-Type': 'application/json; charset=utf-8' });
+      if (path === '/api/map') return send(200, JSON.stringify(cache.view(new URL(req.url, 'http://localhost'))), { 'Content-Type': 'application/json; charset=utf-8' });
+      const vendor = vendorAssets.get(path);
+      if (vendor) {
+        let body = await readFile(new URL(`../node_modules/${vendor}`, import.meta.url), 'utf8');
+        if (path === '/vendor/OrbitControls.js') body = body.replace("from 'three'", "from '/vendor/three.module.js'");
+        return send(200, body, { 'Content-Type': 'text/javascript; charset=utf-8' });
+      }
       const asset = assets.get(path);
       if (!asset) return send(404, 'Not found');
       const body = await readFile(new URL(`../public/${asset[0]}`, import.meta.url));

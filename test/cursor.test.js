@@ -33,3 +33,26 @@ test('without a Cursor key only PR tiles appear', async () => {
   const cache = createCache({ repos: [repo], github: { collectRepo: async () => [pr()] }, cursor: createCursor(), now: () => now });
   assert.equal((await cache.refresh()).items.length, 1);
 });
+
+test('distinct Cursor runs sharing one PR retain identities without extra legacy tiles', async () => {
+  const cursor = createCursor('fixture-key', async () => Response.json({ agents: [
+    { id: 'first', name: 'Build', status: 'RUNNING', target: { prUrl: pr().url, url: 'https://cursor.com/agents/first' } },
+    { id: 'second', name: 'Revision', status: 'FINISHED', target: { prUrl: pr().url, url: 'https://cursor.com/agents/second' } },
+    { id: 'first', name: 'Build', status: 'RUNNING', target: { prUrl: pr().url, url: 'https://cursor.com/agents/first' } },
+  ] }));
+  const cache = createCache({ repos: [repo], github: { collectRepo: async () => [pr()] }, cursor, now: () => now });
+  const snapshot = await cache.refresh();
+  assert.equal(snapshot.items.length, 1);
+  assert.deepEqual(snapshot.items[0].agentInstances.map(run => run.id), ['first', 'second']);
+  assert.equal(snapshot.items[0].agent.id, 'first');
+  assert.equal(snapshot.sourceHealth.find(source => source.id === 'cursor').status, 'current');
+});
+
+test('URL credentials are never reflected into Cursor conversation links', async () => {
+  const cursor = createCursor('fixture-key', async () => Response.json({ agents: [
+    { id: 'one', source: { repository: `https://github.com/${repo.repo}` }, target: { url: 'https://private:secret@cursor.com/agents/one' } },
+  ] }));
+  const result = await cursor.collect();
+  assert.equal(result.unlinked[0].agent.url, null);
+  assert.doesNotMatch(JSON.stringify(result.unlinked), /private|secret/);
+});

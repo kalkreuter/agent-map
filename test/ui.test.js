@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
+import { normalizeSnapshot, needsAndre, cycleWaiting } from '../public/scene-state.js';
+import { demoState } from '../public/demo-state.js';
 
 const html = readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
-const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8').replace(/^import[^\n]+\n/, '');
+const app = readFileSync(new URL('../public/app.js', import.meta.url), 'utf8').replace(/^import[^\n]+\n/gm, '');
 
 // Model only the DOM operations used by app.js; the map renderer is a separate boundary.
 class Element {
@@ -32,7 +34,7 @@ async function loadApp(initial = snapshot()) {
   const document = { getElementById: id => elements.get(id) ?? null, createElement: () => new Element(),
     createTextNode: value => { const node = new Element(); node.textContent = value; return node; }, addEventListener() {} };
   let current = initial;
-  const context = createContext({ document, URL, AbortSignal, setTimeout: () => 1, clearTimeout() {},
+  const context = createContext({ document, URL, AbortSignal, normalizeSnapshot, needsAndre, cycleWaiting, demoState, setTimeout: () => 1, clearTimeout() {},
     Option: class extends Element { constructor(label, value) { super(); this.textContent = label; this.value = value; } },
     HexMap: class { setItems() {} select() {} fit() {} zoom() {} },
     fetch: async () => ({ ok: true, status: 200, json: async () => current }) });

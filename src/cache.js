@@ -5,7 +5,13 @@ export function createCache({ repos, github, cursor, railway, now = Date.now }) 
   const previous = new Map();
   const previousDeployments = new Map();
   let snapshot = { updatedAt: null, repos: repos.map(repo => ({ ...repo, stale: false, updatedAt: null })),
-    items: [], errors: [], loading: true, states, pollMs: rules.pollMs };
+    items: [], errors: [], loading: true, states, pollMs: rules.pollMs,
+    explicitInputLabels: rules.awaitingLabels,
+    sourceHealth: [
+      { id: 'github', name: 'GitHub', status: 'unknown', observedAt: null },
+      { id: 'cursor', name: 'Cursor', status: cursor ? 'unknown' : 'not_configured', observedAt: null },
+      { id: 'railway', name: 'Railway', status: railway ? 'unknown' : 'not_configured', observedAt: null },
+    ] };
   let pending;
   function view() {
     return { ...snapshot, items: snapshot.items
@@ -16,7 +22,7 @@ export function createCache({ repos, github, cursor, railway, now = Date.now }) 
     if (pending) return pending;
     pending = (async () => {
       const errors = [];
-      let agents = { byPr: new Map(), unlinked: [] };
+      let agents = { byPr: new Map(), unlinked: [] }, cursorOk = false;
       github.beginCycle?.();
       const comparisons = new Map();
       const deploymentWork = railway ? Promise.all(repos.map(async repo => {
@@ -70,7 +76,7 @@ export function createCache({ repos, github, cursor, railway, now = Date.now }) 
         }
       }));
       if (cursor) {
-        try { agents = await cursor.collect(); }
+        try { agents = await cursor.collect(); cursorOk = true; }
         catch { errors.push('Cursor status unavailable. GitHub data is still shown.'); }
       }
       const standalone = agents.unlinked.flatMap(agent => {
@@ -79,10 +85,23 @@ export function createCache({ repos, github, cursor, railway, now = Date.now }) 
       });
       const prCount = collected.reduce((total, repo) => total + repo.items.length, 0);
       const deployments = await deploymentWork;
+      const observedAt = new Date(now()).toISOString();
+      const sourceHealth = [
+        { id: 'github', name: 'GitHub', status: collected.every(repo => !repo.stale) ? 'current' : 'stale',
+          observedAt: collected.every(repo => !repo.stale) ? observedAt : snapshot.sourceHealth.find(source => source.id === 'github')?.observedAt ?? null },
+        { id: 'cursor', name: 'Cursor', status: !cursor ? 'not_configured' : cursorOk ? 'current' : 'unavailable',
+          observedAt: cursorOk ? observedAt : snapshot.sourceHealth.find(source => source.id === 'cursor')?.observedAt ?? null },
+        { id: 'railway', name: 'Railway', status: !railway ? 'not_configured' : deployments.some(item => item.stale) ? 'stale' : 'current',
+          observedAt: railway && deployments.length && deployments.every(item => !item.stale) ? observedAt : snapshot.sourceHealth.find(source => source.id === 'railway')?.observedAt ?? null },
+      ];
       snapshot = { ...snapshot, loading: false, updatedAt: new Date(now()).toISOString(), errors,
+        sourceHealth,
         pollMs: pollInterval({ repoCount: repos.length, prCount, ...github.usage?.(), now: now() }),
         repos: collected.map(({ items, ...repo }) => repo),
-        items: [...collected.flatMap(repo => repo.items.map(pr => ({ ...pr, agent: agents.byPr.get(pr.url.toLowerCase()) ?? null }))), ...standalone, ...deployments] };
+        items: [...collected.flatMap(repo => repo.items.map(pr => ({ ...pr, collectedAt: repo.updatedAt,
+          agent: agents.byPr.get(pr.url.toLowerCase()) ?? null,
+          agentInstances: (agents.byPrInstances?.get(pr.url.toLowerCase()) ?? []).map(agent => ({ ...agent, observedAt })) }))),
+          ...standalone.map(item => ({ ...item, collectedAt: observedAt })), ...deployments] };
       return view();
     })().finally(() => { pending = null; });
     return pending;
